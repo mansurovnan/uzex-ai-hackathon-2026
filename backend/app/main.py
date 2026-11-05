@@ -79,6 +79,16 @@ async def chat_endpoint(payload: ChatRequest):
         evidence=result.get("evidence")
     )
 
+def get_commit_sha() -> str:
+    env_sha = os.environ.get("RENDER_GIT_COMMIT") or os.environ.get("COMMIT_SHA")
+    if env_sha:
+        return env_sha[:7]
+    try:
+        import subprocess
+        return subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], text=True).strip()
+    except Exception:
+        return "4d165ba"
+
 @app.get("/api/health")
 @app.get("/health")
 @app.get("/healthz")
@@ -99,7 +109,7 @@ async def health_check():
             "total_participants": participants_count,
             "total_brokers": brokers_count,
             "version": "2.0.0",
-            "commit_sha": "10dcdc7"
+            "commit_sha": get_commit_sha()
         }
     except Exception as e:
         return JSONResponse(status_code=500, content={"status": "unhealthy", "ready": False, "error": str(e)})
@@ -110,7 +120,7 @@ async def version_info():
     return {
         "name": "UZEX AI — Smart Stock Exchange Assistant",
         "version": "2.0.0",
-        "commit_sha": "10dcdc7",
+        "commit_sha": get_commit_sha(),
         "supported_languages": ["uz-Latn", "uz-Cyrl", "ru"],
         "dataset": {
             "total_deals": 500000,
