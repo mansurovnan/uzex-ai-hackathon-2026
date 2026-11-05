@@ -1,0 +1,84 @@
+# ============================================
+# Git Ignore for UZEX AI Hackathon 2026
+# ============================================
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual Environments
+venv/
+.venv/
+env/
+.env/
+ENV/
+backend/venv/
+**/venv/
+**/.venv/
+
+# Package & Distribution
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Testing & Caching
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment & Credentials (NEVER commit secrets)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.cert
+credentials.json
+token.json
+
+# DuckDB Generated Artifacts (Auto-built from dataset/original CSVs)
+# Note: dataset/processed/uzex_data.duckdb is 115 MB (>100MB GitHub limit)
+*.duckdb
+*.duckdb.wal
+dataset/processed/*.duckdb
+dataset/processed/*.parquet
+!dataset/processed/.gitkeep
+
+# IDEs & Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Operating System Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db

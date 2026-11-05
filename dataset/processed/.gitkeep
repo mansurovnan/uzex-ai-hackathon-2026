@@ -1,0 +1,2 @@
+# Placeholder to preserve dataset/processed directory structure.
+# uzex_data.duckdb is built automatically on first run via backend/app/database/importer.py

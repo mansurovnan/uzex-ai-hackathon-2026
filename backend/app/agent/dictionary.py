@@ -1,0 +1,115 @@
+# Bilingual dictionary mapping Uzbek/Russian terms to dataset commodities, regions, and statuses
+
+COMMODITY_MAP = {
+    # Cotton & textiles
+    "paxta": "хлопок",
+    "paxta tolasi": "хлопковое волокно",
+    "paxta moyi": "масло хлопковое",
+    "chigit": "семена хлопчатника",
+    "shrot": "шрот хлопковых семян",
+    "kalava": "пряжа",
+    "ip": "пряжа",
+    
+    # Building materials
+    "sement": "цемент",
+    "tsement": "цемент",
+    "portlandtsement": "портландцемент",
+    "bitum": "битум",
+    "armatura": "прокат",
+    "metall": "прокат",
+    "oyna": "стекло",
+    "shisha": "стекло",
+    "gips": "гипс",
+    "ohak": "известь",
+    "qum": "песок",
+    "shag'al": "щебень",
+    "g'isht": "кирпич",
+    "profil": "профиль алюминиевый",
+    "truba": "труба",
+    
+    # Agriculture & food
+    "bug'doy": "пшеница",
+    "bugdoy": "пшеница",
+    "un": "мука",
+    "shakar": "сахар",
+    "yog'": "масло",
+    "yog": "масло",
+    "kungaboqar yog'i": "масло подсолнечное",
+    "arpa": "ячмень",
+    "guruch": "рис",
+    "makkajo'xori": "кукуруза",
+    "kunjara": "жмых",
+    
+    # Chemicals & fertilizers
+    "selitra": "аммиачная селитра",
+    "azotli o'g'it": "селитра",
+    "o'g'it": "удобрения",
+    "karbamid": "карбамид",
+    "ammiak": "аммиак",
+    "oltingugurt": "сера",
+    "polietilen": "полиэтилен",
+    "polipropilen": "полипропилен",
+    "polimer": "полимер",
+    "plastmassa": "пластмасс",
+    
+    # Fuels & metals
+    "benzin": "автобензин",
+    "avtobenzin": "автобензин",
+    "dizel": "дизельное топливо",
+    "solyarka": "дизельное топливо",
+    "ko'mir": "уголь",
+    "komir": "уголь",
+    "mis": "катод",
+    "mis katodi": "катод",
+    "katod": "катод",
+    "katod mis": "катод",
+    "alyuminiy": "алюминий",
+    "qo'rg'oshin": "свинец",
+    "sink": "цинк"
+}
+
+REGION_MAP = {
+    "toshkent shahri": "Toshkent shahri",
+    "toshkent shahar": "Toshkent shahri",
+    "toshkent": "Toshkent",
+    "tashkent": "Toshkent",
+    "toshkent viloyati": "Toshkent viloyati",
+    "samarqand": "Samarqand viloyati",
+    "samarkand": "Samarqand viloyati",
+    "buxoro": "Buxoro viloyati",
+    "buxara": "Buxoro viloyati",
+    "andijon": "Andijon viloyati",
+    "andijan": "Andijon viloyati",
+    "farg'ona": "Farg‘ona viloyati",
+    "fargona": "Farg‘ona viloyati",
+    "fergana": "Farg‘ona viloyati",
+    "namangan": "Namangan viloyati",
+    "qashqadaryo": "Qashqadaryo viloyati",
+    "kashkadarya": "Qashqadaryo viloyati",
+    "surxondaryo": "Surxondaryo viloyati",
+    "surxondaryo viloyati": "Surxondaryo viloyati",
+    "xorazm": "Xorazm viloyati",
+    "xorezm": "Xorazm viloyati",
+    "navoiy": "Navoiy viloyati",
+    "navoi": "Navoiy viloyati",
+    "jizzax": "Jizzax viloyati",
+    "djizak": "Jizzax viloyati",
+    "sirdaryo": "Sirdaryo viloyati",
+    "sirdarya": "Sirdaryo viloyati",
+    "qoraqalpog'iston": "Qoraqalpog‘iston Respublikasi",
+    "karakalpakstan": "Qoraqalpog‘iston Respublikasi"
+}
+
+STATUS_MAP = {
+    "ijro etilgan": "Исполнен",
+    "bajarilgan": "Исполнен",
+    "ispolnen": "Исполнен",
+    "yopilgan": "Исполнен",
+    "bekor qilingan": "Аннулирован(Не оплачен)",
+    "to'lanmagan": "Аннулирован(Не оплачен)",
+    "annulirovan": "Аннулирован(Не оплачен)",
+    "qisman": "Исполнен(Частично)",
+    "to'langan": "Оплачен",
+    "yangi": "Новый",
+    "kutilmoqda": "Ждёт оплату"
+}

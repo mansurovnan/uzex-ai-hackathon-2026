@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  uzex-ai:
+    build: .
+    container_name: uzex_ai_hackathon
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      - APP_PORT=8000
+      - APP_HOST=0.0.0.0
+      - DB_PATH=/app/dataset/processed/uzex_data.duckdb
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+    volumes:
+      - ./dataset/processed:/app/dataset/processed

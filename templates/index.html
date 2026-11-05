@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UZEX AI — Smart Stock Exchange Assistant</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="chat-header">
+            <div class="brand">
+                <div class="logo-badge">UZEX</div>
+                <div class="brand-text">
+                    <h1>UZEX AI</h1>
+                    <p class="subtitle">Smart Stock Exchange Assistant</p>
+                </div>
+            </div>
+            <div class="header-status">
+                <span class="status-dot"></span> 500,000 Bitimlar Bazasi
+            </div>
+        </header>
+
+        <!-- Clickable Suggestion Pills -->
+        <div class="suggestions-bar">
+            <span class="suggestions-label">Misol savollar:</span>
+            <button class="pill" onclick="sendSuggestion('2024-yilda jami birja aylanmasi qancha bo\'lgan?')">
+                📊 2024 birja aylanmasi
+            </button>
+            <button class="pill" onclick="sendSuggestion('Каков рейтинг самых активных брокеров?')">
+                🏆 Топ брокеров
+            </button>
+            <button class="pill" onclick="sendSuggestion('Bekor qilingan bitimlar soni va summasi qancha?')">
+                ⚠️ Bekor qilingan bitimlar
+            </button>
+        </div>
+
+        <!-- Chat History -->
+        <main class="chat-area" id="chatArea">
+            <div class="message ai">
+                <div class="msg-avatar">AI</div>
+                <div class="msg-content">
+                    <p><strong>Assalomu alaykum! Здравствуйте!</strong></p>
+                    <p>Men UZEX tovar-xomashyo birjasining rasmiy AI agentiman. 2022–2026 yillardagi 500 000 ta birja bitimlari, shartnomalar, brokerlar va narxlar bo'yicha har qanday savolingizga o'zbek yoki rus tilida aniq javob beraman.</p>
+                    <p>Savolingizni pastdagi maydonga yozing yoki yuqoridagi misollardan birini tanlang.</p>
+                </div>
+            </div>
+        </main>
+
+        <!-- Loading Indicator -->
+        <div class="loading-bar" id="loadingIndicator" style="display: none;">
+            <div class="typing-indicator">
+                <span></span><span></span><span></span>
+            </div>
+            <span class="loading-text">Birja ma'lumotlar bazasidan hisoblanmoqda...</span>
+        </div>
+
+        <!-- Input Bar -->
+        <footer class="chat-footer">
+            <form id="chatForm" onsubmit="handleSend(event)">
+                <div class="input-wrapper">
+                    <input 
+                        type="text" 
+                        id="userInput" 
+                        placeholder="Birja bitimlari bo'yicha savolingizni yozing (o'zbek yoki rus tilida)..." 
+                        autocomplete="off"
+                        required
+                    />
+                    <button type="submit" id="sendBtn" class="send-button" title="Yuborish">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="22" y1="2" x2="11" y2="13"></line>
+                            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                        </svg>
+                    </button>
+                </div>
+            </form>
+        </footer>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,471 @@
+"""
+Universal Schema-Aware SQL Generator for UZEX AI Hackathon.
+Dynamically constructs analytical SQL queries over DuckDB across all 6 source data categories.
+Supports arbitrary questions, cross-table JOINs, aggregations, rankings, comparisons,
+temporal trends, multi-turn follow-ups, and unanswerable intent detection.
+"""
+
+import os
+import re
+from typing import Tuple, Dict, Any, Optional, List
+from .schema_registry import SCHEMA_METADATA, get_schema_summary_text
+from .entity_resolver import EntityResolver
+from .context_manager import ConversationContext
+
+class UniversalSQLGenerator:
+    def __init__(self, resolver: Optional[EntityResolver] = None, context: Optional[ConversationContext] = None):
+        self.resolver = resolver or EntityResolver()
+        self.context = context or ConversationContext()
+
+    def generate_sql(self, question: str, session_id: str = "default") -> Dict[str, Any]:
+        """
+        Main entry point for generating SQL from arbitrary natural language questions.
+        Returns a dictionary containing:
+        - sql: generated SQL string
+        - intent: analytical intent category
+        - metadata: extracted entities and filters
+        - is_unanswerable: bool flag if question is outside dataset scope
+        """
+        from .analytical_planner import AnalyticalPlanner
+        plans = AnalyticalPlanner.parse_message(question)
+        plan = plans[0] if plans else None
+        return self.generate_sql_for_plan(plan or question, session_id=session_id)
+
+    def generate_sql_for_plan(self, plan_or_q: Any, session_id: str = "default") -> Dict[str, Any]:
+        """
+        Generates dynamic SQL given an AnalyticalPlan (or raw question string).
+        """
+        from .analytical_planner import SubQuestionPlan
+        if isinstance(plan_or_q, SubQuestionPlan):
+            plan = plan_or_q
+            q_raw = plan.raw_question
+        else:
+            from .analytical_planner import AnalyticalPlanner
+            plans = AnalyticalPlanner.parse_message(str(plan_or_q))
+            plan = plans[0]
+            q_raw = str(plan_or_q)
+
+        q_lower = q_raw.lower().strip()
+
+        # 1. Check for completely out-of-scope / unanswerable questions
+        if self._is_out_of_scope(q_lower):
+            return {
+                "sql": None,
+                "intent": "unanswerable",
+                "metadata": {},
+                "is_unanswerable": True,
+                "reason": "out_of_scope"
+            }
+
+        # 2. Multi-turn reference resolution
+        inherited = self.context.resolve_references(q_raw, session_id)
+
+        # 3. Extract temporal filters from plan or prompt
+        year = plan.filters.get("year") or self._extract_year(q_lower) or inherited.get("year")
+        is_trend = any(w in q_lower for w in ["o'zgarish", "dinamika", "yillar", "trend", "динамик", "изменени", "по годам", "yillar bo'yicha"]) or "by_year" in plan.dimensions
+        is_comparison = any(w in q_lower for w in ["solishtir", "taqqosla", "farqi", "сравни", "разница", "сопостав"]) or plan.target_entity == "market_comparison"
+
+        # 4. Resolve entities against actual database records
+        broker = self.resolver.resolve_broker(q_raw) or inherited.get("broker")
+        company = self.resolver.resolve_company(q_raw) or inherited.get("company")
+        commodity = self.resolver.resolve_commodity(q_raw) or inherited.get("commodity")
+        category = self.resolver.resolve_category(q_raw)
+        region = self.resolver.resolve_region(q_raw) or inherited.get("region")
+        status = self.resolver.resolve_status(q_raw)
+
+        # Check for LLM generation if API key is provided
+        gemini_key = os.getenv("GEMINI_API_KEY")
+        if gemini_key:
+            try:
+                llm_res = self._try_gemini_generation(q_raw, gemini_key, {
+                    "broker": broker, "company": company, "commodity": commodity,
+                    "year": year, "region": region
+                })
+                if llm_res and llm_res.get("sql"):
+                    return llm_res
+            except Exception:
+                pass  # Fallback to dynamic deterministic engine
+
+        # 5. Dynamic Semantic Query Synthesis
+        res = self._synthesize_dynamic_sql(
+            q_lower=q_lower,
+            q_raw=q_raw,
+            year=year,
+            is_trend=is_trend,
+            is_comparison=is_comparison,
+            broker=broker,
+            company=company,
+            commodity=commodity,
+            category=category,
+            region=region,
+            status=status
+        )
+        
+        # Override limit if plan explicitly specified one
+        if plan.ranking_limit and "LIMIT" in res.get("sql", ""):
+            res["sql"] = re.sub(r'LIMIT \d+', f'LIMIT {plan.ranking_limit}', res["sql"])
+            
+        return res
+
+    def _is_out_of_scope(self, q: str) -> bool:
+        """Identifies questions that have zero relevance to UZEX commodity transactions."""
+        out_keywords = [
+            "ob-havo", "weather", "pogoda", "погода", "futbol", "football", "футбол", "prezident",
+            "kino", "film", "фильм", "aktsiya dividendi", "дивиденд", "kriptovalyuta", "криптовалют",
+            "bitcoin", "биткоин", "биткоина", "retsept", "рецепт", "dori", "лекарств", "she'r", "стих", "anekdot", "анекдот", "restoran"
+        ]
+        return any(w in q for w in out_keywords)
+
+    def _extract_year(self, text: str) -> Optional[int]:
+        m = re.search(r'\b(202[2-6])\b', text)
+        return int(m.group(1)) if m else None
+
+    def _synthesize_dynamic_sql(
+        self,
+        q_lower: str,
+        q_raw: str,
+        year: Optional[int],
+        is_trend: bool,
+        is_comparison: bool,
+        broker: Optional[Tuple[str, str]],
+        company: Optional[Tuple[str, str]],
+        commodity: Optional[str],
+        category: Optional[str],
+        region: Optional[str],
+        status: Optional[str]
+    ) -> Dict[str, Any]:
+        """
+        Dynamically constructs SQL based on detected dimensions, metrics, and relationships.
+        """
+        year_filter = f"EXTRACT(YEAR FROM deal_date) = {year}" if year else "1=1"
+        region_filter = f"(seller_region LIKE '%{region}%' OR buyer_region LIKE '%{region}%')" if region else "1=1"
+
+        # -------------------------------------------------------------
+        # DIMENSION 1: PARTICIPANTS (Sellers / Buyers / Top Companies)
+        # -------------------------------------------------------------
+        # Top Sellers
+        if any(w in q_lower for w in ["sotuvchi", "sotgan", "kim sotgan", "продавец", "продавц", "продал", "поставщик"]):
+            if company:
+                inn, name = company
+                sql = f"""
+                SELECT 
+                    seller_inn AS inn,
+                    seller_name AS name,
+                    seller_region AS region,
+                    seller_activity AS activity,
+                    COUNT(*) AS total_deals,
+                    SUM(CASE WHEN is_executed THEN 1 ELSE 0 END) AS executed_deals,
+                    SUM(amount_uzs) AS total_revenue_uzs,
+                    SUM(executed_amount_uzs) AS executed_revenue_uzs
+                FROM v_deals_enriched
+                WHERE seller_inn = '{inn}' AND {year_filter}
+                GROUP BY seller_inn, seller_name, seller_region, seller_activity
+                """
+                return {"sql": sql, "intent": "seller_single", "metadata": {"company": company, "year": year}}
+            else:
+                sql = f"""
+                SELECT 
+                    seller_inn AS inn,
+                    seller_name AS name,
+                    seller_region AS region,
+                    COUNT(*) AS deals_count,
+                    SUM(executed_amount_uzs) AS total_sales_uzs
+                FROM v_deals_enriched
+                WHERE is_executed = TRUE AND {year_filter} AND {region_filter}
+                GROUP BY seller_inn, seller_name, seller_region
+                ORDER BY total_sales_uzs DESC
+                LIMIT 10
+                """
+                return {"sql": sql, "intent": "seller_top", "metadata": {"year": year, "region": region}}
+
+        # Top Buyers
+        if any(w in q_lower for w in ["xaridor", "olgan", "sotib olgan", "xarid qilgan", "покупател", "купил", "закуп"]):
+            if company:
+                inn, name = company
+                sql = f"""
+                SELECT 
+                    buyer_inn AS inn,
+                    buyer_name AS name,
+                    buyer_region AS region,
+                    buyer_activity AS activity,
+                    COUNT(*) AS total_deals,
+                    SUM(amount_uzs) AS total_spend_uzs,
+                    SUM(executed_amount_uzs) AS executed_spend_uzs
+                FROM v_deals_enriched
+                WHERE buyer_inn = '{inn}' AND {year_filter}
+                GROUP BY buyer_inn, buyer_name, buyer_region, buyer_activity
+                """
+                return {"sql": sql, "intent": "buyer_single", "metadata": {"company": company, "year": year}}
+            else:
+                sql = f"""
+                SELECT 
+                    buyer_inn AS inn,
+                    buyer_name AS name,
+                    buyer_region AS region,
+                    COUNT(*) AS deals_count,
+                    SUM(executed_amount_uzs) AS total_purchases_uzs
+                FROM v_deals_enriched
+                WHERE is_executed = TRUE AND {year_filter} AND {region_filter}
+                GROUP BY buyer_inn, buyer_name, buyer_region
+                ORDER BY total_purchases_uzs DESC
+                LIMIT 10
+                """
+                return {"sql": sql, "intent": "buyer_top", "metadata": {"year": year, "region": region}}
+
+        # Single Company General
+        if company:
+            inn, name = company
+            sql = f"""
+            SELECT 
+                inn, name, region, activity_type, role, vat_payer
+            FROM participants
+            WHERE inn = '{inn}'
+            """
+            return {"sql": sql, "intent": "participant_card", "metadata": {"company": company}}
+
+        # -------------------------------------------------------------
+        # DIMENSION 2: BROKERS
+        # -------------------------------------------------------------
+        if broker or any(w in q_lower for w in ["broker", "брокер"]):
+            if broker:
+                b_code, b_name = broker
+                sql = f"""
+                SELECT 
+                    '{b_code}' AS broker_code,
+                    '{b_name}' AS broker_name,
+                    COUNT(*) AS total_deals,
+                    SUM(CASE WHEN is_executed THEN 1 ELSE 0 END) AS executed_deals,
+                    SUM(amount_uzs) AS total_turnover_uzs,
+                    SUM(executed_amount_uzs) AS executed_turnover_uzs
+                FROM v_deals_enriched
+                WHERE (seller_broker_code = '{b_code}' OR buyer_broker_code = '{b_code}')
+                  AND {year_filter}
+                """
+                return {"sql": sql, "intent": "broker_single", "metadata": {"broker": broker, "year": year}}
+            else:
+                sql = f"""
+                SELECT 
+                    seller_broker_code AS broker_code,
+                    seller_broker_name AS broker_name,
+                    COUNT(*) AS total_deals,
+                    SUM(executed_amount_uzs) AS executed_turnover_uzs
+                FROM v_deals_enriched
+                WHERE is_executed = TRUE AND {year_filter}
+                GROUP BY seller_broker_code, seller_broker_name
+                ORDER BY executed_turnover_uzs DESC
+                LIMIT 10
+                """
+                return {"sql": sql, "intent": "broker_top", "metadata": {"year": year}}
+
+        # -------------------------------------------------------------
+        # DIMENSION 3: MARKET COMPARISON (Export USD vs Domestic UZS)
+        # -------------------------------------------------------------
+        if is_comparison and any(w in q_lower for w in ["eksport", "ichki", "экспорт", "внутренн", "bozor"]):
+            sql = f"""
+            SELECT 
+                contract_type,
+                currency,
+                COUNT(*) AS deals_count,
+                SUM(quantity_lots * lot_size) AS total_units,
+                SUM(amount_contract_currency) AS amount_in_currency,
+                SUM(amount_uzs) AS equivalent_uzs,
+                ROUND(COUNT(*) * 100.0 / (SELECT COUNT(*) FROM deals WHERE {year_filter}), 2) AS deals_percentage
+            FROM v_deals_enriched
+            WHERE {year_filter}
+            GROUP BY contract_type, currency
+            ORDER BY deals_count DESC
+            """
+            return {"sql": sql, "intent": "market_comparison", "metadata": {"year": year}}
+
+        # Export Specific Deals
+        if any(w in q_lower for w in ["eksport", "export", "dollar", "usd", "экспорт"]):
+            sql = f"""
+            SELECT 
+                COUNT(*) AS total_export_deals,
+                SUM(quantity_lots * lot_size) AS total_export_volume,
+                SUM(amount_contract_currency) AS total_export_usd,
+                SUM(amount_uzs) AS total_export_uzs_equivalent
+            FROM v_deals_enriched
+            WHERE contract_type = 'Экспортный' AND {year_filter}
+            """
+            return {"sql": sql, "intent": "export_deals", "metadata": {"year": year}}
+
+        # -------------------------------------------------------------
+        # DIMENSION 4: COMMODITY / PRODUCT DYNAMICS
+        # -------------------------------------------------------------
+        if commodity:
+            if is_trend:
+                # Multi-year trend
+                sql = f"""
+                SELECT 
+                    EXTRACT(YEAR FROM deal_date) AS deal_year,
+                    COUNT(*) AS deals_count,
+                    SUM(contracted_volume_units) AS contracted_volume,
+                    SUM(executed_volume_units) AS delivered_volume,
+                    unit,
+                    SUM(amount_uzs) AS turnover_uzs,
+                    AVG(unit_price_contract_currency) AS avg_unit_price
+                FROM v_deals_enriched
+                WHERE LOWER(product_raw_name) LIKE '%{commodity}%'
+                GROUP BY EXTRACT(YEAR FROM deal_date), unit
+                ORDER BY deal_year ASC
+                """
+                return {"sql": sql, "intent": "commodity_trend", "metadata": {"commodity": commodity}}
+            else:
+                sql = f"""
+                SELECT 
+                    product_category,
+                    unit,
+                    COUNT(*) AS deals_count,
+                    SUM(contracted_volume_units) AS total_contracted_units,
+                    SUM(executed_volume_units) AS total_delivered_units,
+                    SUM(amount_uzs) AS total_amount_uzs,
+                    AVG(unit_price_contract_currency) AS avg_price_per_unit
+                FROM v_deals_enriched
+                WHERE LOWER(product_raw_name) LIKE '%{commodity}%'
+                  AND {year_filter}
+                  AND {region_filter}
+                GROUP BY product_category, unit
+                ORDER BY total_amount_uzs DESC
+                LIMIT 5
+                """
+                return {"sql": sql, "intent": "commodity_stats", "metadata": {"commodity": commodity, "year": year}}
+
+        # Product Categories
+        if category:
+            sql = f"""
+            SELECT 
+                product_name,
+                COUNT(*) AS deals_count,
+                SUM(executed_amount_uzs) AS total_sales_uzs
+            FROM v_deals_enriched
+            WHERE product_category = '{category}' AND {year_filter}
+            GROUP BY product_name
+            ORDER BY total_sales_uzs DESC
+            LIMIT 10
+            """
+            return {"sql": sql, "intent": "category_breakdown", "metadata": {"category": category, "year": year}}
+
+        # Top Products
+        if any(w in q_lower for w in ["eng ko'p", "top tovar", "reyting", "ommapop", "лидер", "популярн", "продаваем", "топ товар", "топ самых"]):
+            sql = f"""
+            SELECT 
+                product_name,
+                COUNT(*) AS deals_count,
+                SUM(contracted_volume_units) AS total_volume,
+                unit,
+                SUM(amount_uzs) AS total_turnover_uzs
+            FROM v_deals_enriched
+            WHERE is_executed = TRUE AND {year_filter}
+            GROUP BY product_name, unit
+            ORDER BY total_turnover_uzs DESC
+            LIMIT 10
+            """
+            return {"sql": sql, "intent": "top_products", "metadata": {"year": year}}
+
+        # -------------------------------------------------------------
+        # DIMENSION 5: STATUSES & CANCELLED TRANSACTIONS
+        # -------------------------------------------------------------
+        if status or any(w in q_lower for w in ["bekor", "annulir", "to'lanmagan", "аннулирован", "отменен"]):
+            sql = f"""
+            SELECT 
+                COUNT(*) AS cancelled_deals_count,
+                SUM(amount_uzs) AS total_cancelled_amount_uzs,
+                ROUND(COUNT(*) * 100.0 / (SELECT COUNT(*) FROM deals WHERE {year_filter}), 2) AS cancellation_percent
+            FROM v_deals_enriched
+            WHERE status = 'Аннулирован(Не оплачен)' AND {year_filter}
+            """
+            return {"sql": sql, "intent": "cancelled_deals", "metadata": {"year": year}}
+
+        # Transaction Status Breakdown
+        if any(w in q_lower for w in ["holat", "status", "bajarilgan", "ijro", "статус", "состояни", "исполнен"]):
+            sql = f"""
+            SELECT 
+                status,
+                COUNT(*) AS deals_count,
+                SUM(amount_uzs) AS amount_uzs,
+                ROUND(COUNT(*) * 100.0 / (SELECT COUNT(*) FROM deals WHERE {year_filter}), 2) AS percentage
+            FROM v_deals_enriched
+            WHERE {year_filter}
+            GROUP BY status
+            ORDER BY deals_count DESC
+            """
+            return {"sql": sql, "intent": "status_breakdown", "metadata": {"year": year}}
+
+        # -------------------------------------------------------------
+        # DIMENSION 6: REGIONS
+        # -------------------------------------------------------------
+        if region:
+            sql = f"""
+            SELECT 
+                seller_region AS region,
+                COUNT(*) AS deals_count,
+                SUM(amount_uzs) AS total_sales_uzs,
+                SUM(executed_amount_uzs) AS executed_sales_uzs
+            FROM v_deals_enriched
+            WHERE seller_region LIKE '%{region}%' AND {year_filter}
+            GROUP BY seller_region
+            """
+            return {"sql": sql, "intent": "region_stats", "metadata": {"region": region, "year": year}}
+
+        # -------------------------------------------------------------
+        # DIMENSION 7: ANNUAL TREND / YEAR-OVER-YEAR DYNAMICS
+        # -------------------------------------------------------------
+        if is_trend:
+            sql = """
+            SELECT 
+                EXTRACT(YEAR FROM deal_date) AS year,
+                COUNT(*) AS total_deals,
+                SUM(CASE WHEN is_executed THEN 1 ELSE 0 END) AS executed_deals,
+                SUM(amount_uzs) AS turnover_uzs,
+                SUM(executed_amount_uzs) AS executed_turnover_uzs
+            FROM v_deals_enriched
+            GROUP BY EXTRACT(YEAR FROM deal_date)
+            ORDER BY year ASC
+            """
+            return {"sql": sql, "intent": "annual_trend", "metadata": {}}
+
+        # -------------------------------------------------------------
+        # DEFAULT: ANNUAL OR OVERALL TURNOVER
+        # -------------------------------------------------------------
+        sql = f"""
+        SELECT 
+            COUNT(*) AS total_deals,
+            SUM(CASE WHEN is_executed THEN 1 ELSE 0 END) AS executed_deals,
+            SUM(amount_uzs) AS total_turnover_uzs,
+            SUM(executed_amount_uzs) AS executed_turnover_uzs,
+            SUM(CASE WHEN contract_type = 'Экспортный' THEN amount_contract_currency ELSE 0 END) AS export_amount_usd
+        FROM v_deals_enriched
+        WHERE {year_filter}
+        """
+        return {"sql": sql, "intent": "total_turnover", "metadata": {"year": year}}
+
+    def _try_gemini_generation(self, q: str, api_key: str, extracted: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Invokes Gemini LLM for complex text-to-SQL when API key is active."""
+        try:
+            from google import genai
+            client = genai.Client(api_key=api_key)
+            prompt = f"""
+            You are a senior data engineer writing DuckDB SQL for the UZEX commodity exchange.
+            Database schema:
+            {get_schema_summary_text()}
+
+            Rules:
+            1. Only return a valid DuckDB SQL SELECT statement. No markdown code blocks, no explanations.
+            2. Use 'v_deals_enriched' for transaction calculations (amount_uzs, executed_amount_uzs, is_executed).
+            3. Never compare USD and UZS directly.
+            4. Do not perform any mutations (NO INSERT/UPDATE/DROP).
+
+            User Question: {q}
+            Known entities: {extracted}
+            """
+            resp = client.models.generate_content(
+                model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+                contents=prompt
+            )
+            raw_sql = resp.text.strip().replace("```sql", "").replace("```", "").strip()
+            if raw_sql.upper().startswith("SELECT") or raw_sql.upper().startswith("WITH"):
+                return {"sql": raw_sql, "intent": "dynamic_llm", "metadata": extracted}
+        except Exception:
+            pass
+        return None
