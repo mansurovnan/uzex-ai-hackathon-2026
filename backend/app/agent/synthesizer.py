@@ -7,6 +7,20 @@ Supports multi-question combination and multi-part compound responses.
 
 from typing import List, Dict, Any, Optional
 
+CAVEAT_2026_UZ = (
+    "\n\n> ⚠️ **Muhim eslatma (2026-yil qamrovi):**\n"
+    "> 2026-yil ma'lumotlari to'liq bo'lmagan davrni (yanvar–oktabr, 10 oy) qamrab oladi. "
+    "> Shu sababli 2026-yil umumiy hajmi va bitimlar sonini 2025-yil bilan to'g'ridan-to'g'ri taqqoslashda "
+    "> to'liq 12 oylik ko'rsatkich emasligini inobatga olish lozim."
+)
+
+CAVEAT_2026_RU = (
+    "\n\n> ⚠️ **Важное примечание (покрытие 2026 года):**\n"
+    "> Данные за 2026 год представлены за неполный период (январь–октябрь, 10 месяцев). "
+    "> В связи с этим итоговые показатели 2026 года нельзя напрямую сравнивать с полными итогами "
+    "> 2025 года без учёта неполного периода торгов."
+)
+
 def format_num(val: Any) -> str:
     if val is None:
         return "0"
@@ -223,35 +237,52 @@ class ResponseSynthesizer:
             comm = metadata.get("commodity", "Mahsulot")
             header = f"📈 **'{comm}' bo'yicha yillik dinamika:**\n\n" if lang == "uz" else f"📈 **Годовая динамика по товару '{comm}':**\n\n"
             table = "| Yil | Bitimlar | Shartnoma hajmi | Yetkazilgan | Birlik | Aylanma (so'm) | O'rtacha narx |\n|---|---|---|---|---|---|---|\n" if lang == "uz" else "| Год | Сделок | Объем контрактов | Поставлено | Ед. | Оборот (сум) | Средняя цена |\n|---|---|---|---|---|---|---|\n"
+            has_2026 = False
             for r in rows:
                 yr, count, c_vol, d_vol, unit, turnover, avg_p = r
+                if int(yr) == 2026:
+                    has_2026 = True
                 table += f"| **{int(yr)}** | {format_num(count)} | {format_num(c_vol)} | {format_num(d_vol)} | {unit} | {format_num(turnover)} | {format_num(avg_p)} |\n"
-            return header + table
+            res = header + table
+            if has_2026:
+                res += (CAVEAT_2026_UZ if lang == "uz" else CAVEAT_2026_RU)
+            return res
 
-        # 8. Commodity Stats Single Year
-        if intent == "commodity_stats":
-            cat, unit, count, c_units, d_units, amt, avg_p = first
-            year_str = f" ({metadata.get('year')}-yil)" if metadata.get("year") else ""
+        # 8. Product / Commodity Stats Single Year
+        if intent in ["product_stats", "commodity_stats"]:
+            p_name = first[0]
+            unit = first[1]
+            count = first[2]
+            c_units = first[3]
+            d_units = first[4]
+            amt = first[5]
+            weighted_p = first[6] if len(first) > 6 else first[5]
+            avg_p = first[7] if len(first) > 7 else first[6]
+            year_val = metadata.get("year")
+            year_str = f" ({year_val}-yil)" if year_val else ""
             if lang == "uz":
-                return (
-                    f"🌾 **Tovar Tahlili{year_str}:**\n\n"
-                    f"- **Kategoriya:** {cat}\n"
-                    f"- **Bitimlar soni:** {format_num(count)} ta\n"
+                ans = (
+                    f"🌾 **«{p_name}» bo'yicha birja ko'rsatkichlari{year_str}:**\n\n"
+                    f"- **Tuzilgan bitimlar soni:** {format_num(count)} ta\n"
                     f"- **Shartnoma hajmi:** {format_num(c_units)} {unit}\n"
                     f"- **Haqiqiy yetkazilgan hajm:** {format_num(d_units)} {unit}\n"
-                    f"- **Jami aylanma summasi:** {format_num(amt)} so'm\n"
-                    f"- **O'rtacha birja narxi:** {format_num(avg_p)} so'm/{unit}"
+                    f"- **Jami savdo aylanmasi:** {format_num(amt)} so'm\n"
+                    f"- **O'rtacha tortilgan narx (Weighted average price):** {format_num(weighted_p)} so'm/{unit}\n"
+                    f"- **Oddiy o'rtacha birja narxi:** {format_num(avg_p)} so'm/{unit}"
                 )
             else:
-                return (
-                    f"🌾 **Аналитика по товару{year_str}:**\n\n"
-                    f"- **Категория:** {cat}\n"
+                ans = (
+                    f"🌾 **Биржевые показатели по «{p_name}»{year_str}:**\n\n"
                     f"- **Количество сделок:** {format_num(count)}\n"
                     f"- **Объем по контрактам:** {format_num(c_units)} {unit}\n"
                     f"- **Фактически поставлено:** {format_num(d_units)} {unit}\n"
                     f"- **Общая сумма оборота:** {format_num(amt)} сум\n"
-                    f"- **Средневзвешенная цена:** {format_num(avg_p)} сум/{unit}"
+                    f"- **Средневзвешенная цена (Weighted average price):** {format_num(weighted_p)} сум/{unit}\n"
+                    f"- **Простая средняя цена:** {format_num(avg_p)} сум/{unit}"
                 )
+            if year_val == 2026:
+                ans += (CAVEAT_2026_UZ if lang == "uz" else CAVEAT_2026_RU)
+            return ans
 
         # 9. Product Catalog
         if intent == "product_catalog":
@@ -288,6 +319,7 @@ class ResponseSynthesizer:
             year_str = f" ({metadata.get('year')}-yil)" if metadata.get("year") else ""
             top_company = rows[0][1] if rows else "Yetakchi kompaniya"
             top_sales = format_num(rows[0][6]) if rows else "0"
+            total_sales = sum(float(r[6]) for r in rows if r[6] is not None)
 
             if lang == "uz":
                 header = (
@@ -295,18 +327,19 @@ class ResponseSynthesizer:
                     f"Ko'rsatilgan davrda ushbu mahsulot bo'yicha eng yuqori sotuv hajmiga ega kompaniya — **{top_company}** "
                     f"(savdo hajmi: **{top_sales} so'm**).\n\n"
                 )
-                table = "| № | STIR (INN) | Sotuvchi korxona nomi | Hudud | Bitimlar | Sotilgan hajm | Savdo summasi (so'm) |\n|---|---|---|---|---|---|---|\n"
+                table = "| № | STIR (INN) | Sotuvchi korxona nomi | Hudud | Bitimlar | Sotilgan hajm | Savdo summasi (so'm) | Bozor ulushi |\n|---|---|---|---|---|---|---|---|\n"
             else:
                 header = (
                     f"🏭 **Крупнейшие продавцы по товару '{comm.title()}'{year_str}:**\n\n"
                     f"Лидером по поставкам данного товара является компания **{top_company}** "
                     f"с объемом продаж **{top_sales} сум**.\n\n"
                 )
-                table = "| № | ИНН | Предприятие-продавец | Регион | Сделок | Объем поставок | Сумма продаж (сум) |\n|---|---|---|---|---|---|---|\n"
+                table = "| № | ИНН | Предприятие-продавец | Регион | Сделок | Объем поставок | Сумма продаж (сум) | Доля рынка |\n|---|---|---|---|---|---|---|---|\n"
 
             for i, r in enumerate(rows, 1):
                 inn, name, reg, count, vol, unit, sales = r
-                table += f"| {i} | `{inn}` | **{name}** | {reg} | {format_num(count)} | {format_num(vol)} {unit} | {format_num(sales)} |\n"
+                pct = round((float(sales) * 100.0 / total_sales), 2) if total_sales > 0 else 0
+                table += f"| {i} | `{inn}` | **{name}** | {reg} | {format_num(count)} | {format_num(vol)} {unit} | {format_num(sales)} | {pct}% |\n"
 
             footer = (
                 f"\n💡 *Tavsiya:* Yetakchi korxona `{top_company}` qaysi brokerlar orqali savdo qilganini bilish uchun: `Ushbu kompaniyaning brokerlari kim?` deb so'rashingiz mumkin."
@@ -433,22 +466,33 @@ class ResponseSynthesizer:
         # 9.6 Top Products
         if intent == "top_products":
             year_str = f" ({metadata.get('year')}-yil)" if metadata.get("year") else ""
+            metric_type = metadata.get("metric_type", "turnover")
             top_prod_name = rows[0][0]
             top_turnover = format_num(rows[0][4])
             top_vol = format_num(rows[0][3])
             top_unit = rows[0][1]
 
+            if metric_type == "volume":
+                metric_title_uz = "Jami hajm (tonna/birlik) bo'yicha"
+                metric_title_ru = "физическому объему"
+            elif metric_type == "deals":
+                metric_title_uz = "Bitimlar soni bo'yicha"
+                metric_title_ru = "количеству сделок"
+            else:
+                metric_title_uz = "Pul aylanmasi bo'yicha"
+                metric_title_ru = "объему оборота"
+
             if lang == "uz":
                 header = (
-                    f"📦 **Eng ko'p sotilgan tovarlar reytingi{year_str}:**\n\n"
-                    f"Birja savdolari natijalariga ko'ra, eng yuqori aylanmaga ega mahsulot — **{top_prod_name}** "
-                    f"(jami savdo aylanmasi: **{top_turnover} so'm**, hajm: **{top_vol} {top_unit}**).\n\n"
+                    f"📦 **{metric_title_uz} eng yuqori tovarlar reytingi{year_str}:**\n\n"
+                    f"Birja savdolari natijalariga ko'ra, yetakchi mahsulot — **{top_prod_name}** "
+                    f"(savdo aylanmasi: **{top_turnover} so'm**, hajm: **{top_vol} {top_unit}**).\n\n"
                 )
                 table = "| № | Tovar nomi | O'lchov birligi | Bitimlar soni | Jami hajm | Savdo aylanmasi (so'm) |\n|---|---|---|---|---|---|\n"
             else:
                 header = (
-                    f"📦 **Рейтинг самых продаваемых биржевых товаров{year_str}:**\n\n"
-                    f"Лидером по объему торгов является **{top_prod_name}** "
+                    f"📦 **Рейтинг биржевых товаров по {metric_title_ru}{year_str}:**\n\n"
+                    f"Лидером рейтинга является **{top_prod_name}** "
                     f"с оборотом **{top_turnover} сум** (объем: **{top_vol} {top_unit}**).\n\n"
                 )
                 table = "| № | Наименование товара | Ед. изм. | Сделок | Общий объем | Оборот (сум) |\n|---|---|---|---|---|---|\n"
@@ -468,19 +512,48 @@ class ResponseSynthesizer:
         if intent == "cancelled_deals":
             count, amount, pct = first
             year_str = f" ({metadata.get('year')}-yil)" if metadata.get("year") else ""
+            comm = metadata.get("commodity")
+            comm_str = f"'{comm.title()}' bo'yicha " if comm else ""
+            comm_str_ru = f"по товару '{comm.title()}' " if comm else ""
             if lang == "uz":
                 return (
-                    f"⚠️ **Bekor qilingan bitimlar (To'lov muddati o'tgan){year_str}:**\n\n"
+                    f"⚠️ **{comm_str}Bekor qilingan bitimlar (To'lov muddati o'tgan){year_str}:**\n\n"
                     f"- **Bekor qilingan bitimlar soni:** {format_num(count)} ta\n"
                     f"- **Bekor qilingan bitimlar summasi:** {format_num(amount)} so'm\n"
                     f"- **Jami bitimlardagi ulushi:** {pct}%"
                 )
             else:
                 return (
-                    f"⚠️ **Аннулированные сделки (Не оплаченные в срок){year_str}:**\n\n"
+                    f"⚠️ **Аннулированные сделки {comm_str_ru}(Не оплаченные в срок){year_str}:**\n\n"
                     f"- **Количество аннулированных сделок:** {format_num(count)}\n"
                     f"- **Сумма аннулированных сделок:** {format_num(amount)} сум\n"
                     f"- **Доля от общего числа сделок:** {pct}%"
+                )
+
+        # 10.1 Participant Profile / Card Lookup
+        if intent == "participant_card":
+            inn, name, reg, act, role, vat = first
+            vat_str = "Ha (To'lovchi)" if vat else "Yo'q"
+            if lang == "uz":
+                return (
+                    f"🏢 **Kompaniya Profili (Kartochkasi):**\n\n"
+                    f"- **Kompaniya nomi:** **{name}**\n"
+                    f"- **STIR (INN) raqami:** `{inn}`\n"
+                    f"- **Joylashgan hududi:** **{reg}**\n"
+                    f"- **Faoliyat turi:** {act}\n"
+                    f"- **Birjadagi asosiy roli:** {role}\n"
+                    f"- **QQS to'lovchisi:** {vat_str}"
+                )
+            else:
+                vat_ru = "Да (Плательщик)" if vat else "Нет"
+                return (
+                    f"🏢 **Карточка компании:**\n\n"
+                    f"- **Наименование:** **{name}**\n"
+                    f"- **ИНН:** `{inn}`\n"
+                    f"- **Регион регистрации:** **{reg}**\n"
+                    f"- **Вид деятельности:** {act}\n"
+                    f"- **Роль на бирже:** {role}\n"
+                    f"- **Плательщик НДС:** {vat_ru}"
                 )
 
         # 11. Regional Sales
@@ -526,11 +599,22 @@ class ResponseSynthesizer:
         # 13. Annual Trend
         if intent == "annual_trend":
             header = "📅 **Yillar bo'yicha birja umumiy ko'rsatkichlari dinamikasi:**\n\n" if lang == "uz" else "📅 **Динамика основных биржевых показателей по годам:**\n\n"
-            table = "| Yil | Jami bitimlar | Ijro etilgan | Jami aylanma (so'm) | Ijro aylanmasi (so'm) |\n|---|---|---|---|---|\n" if lang == "uz" else "| Год | Всего сделок | Исполнено | Общий оборот (сум) | Исполненный оборот (сум) |\n|---|---|---|---|---|\n"
+            table = "| Yil | Jami bitimlar | Ijro etilgan | O'rtacha narx | Ijro aylanmasi (so'm) | Jami aylanma (so'm) |\n|---|---|---|---|---|---|\n" if lang == "uz" else "| Год | Всего сделок | Исполнено | Средняя цена | Исполненный оборот (сум) | Общий оборот (сум) |\n|---|---|---|---|---|---|\n"
+            has_2026 = False
             for r in rows:
-                yr, total, exec_d, turn, exec_turn = r
-                table += f"| **{int(yr)}** | {format_num(total)} | {format_num(exec_d)} | {format_num(turn)} | {format_num(exec_turn)} |\n"
-            return header + table
+                yr = int(r[0])
+                total = r[1]
+                exec_d = r[2]
+                avg_p = r[3] if len(r) > 3 else 0
+                exec_turn = r[4] if len(r) > 4 else 0
+                turn = r[5] if len(r) > 5 else 0
+                if yr == 2026:
+                    has_2026 = True
+                table += f"| **{yr}** | {format_num(total)} | {format_num(exec_d)} | {format_num(avg_p)} | {format_num(exec_turn)} | {format_num(turn)} |\n"
+            res = header + table
+            if has_2026:
+                res += (CAVEAT_2026_UZ if lang == "uz" else CAVEAT_2026_RU)
+            return res
 
         # Generic Table Fallback
         header = "📊 **Natijalar:**\n\n" if lang == "uz" else "📊 **Результаты запроса:**\n\n"

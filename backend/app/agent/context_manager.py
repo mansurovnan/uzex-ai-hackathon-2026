@@ -75,7 +75,8 @@ class ConversationContext:
         uz_pronouns = [
             "uning", "uni", "ularning", "ularni", "shu", "ushbu", "buning", "buni", 
             "u haqida", "o'sha", "ushbu mahsulot", "shu mahsulot", "ushbu tovar", 
-            "shu tovar", "ushbu kompaniya", "shu kompaniya", "unga", "undan", "bunda"
+            "shu tovar", "ushbu kompaniya", "shu kompaniya", "bu kompaniya", "bu tovar",
+            "bu korxona", "bu broker", "unga", "undan", "bunda", "bu"
         ]
         uz_cyr_pronouns = [
             "унинг", "уни", "уларнинг", "уларни", "шу", "ушбу", "бунинг", "буни",

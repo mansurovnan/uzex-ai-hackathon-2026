@@ -63,10 +63,10 @@ class ExchangeQueryEngine:
         lang = detect_language(question)
         q_raw = question.strip()
 
-        # 0. Fast-path: Check Pure Conversational Small-talk (Greetings, Thanks, Identity, Farewells)
-        is_conv, conv_category, conv_lang = ConversationalAgent.is_conversational_only(q_raw)
-        if is_conv:
-            ans = ConversationalAgent.generate_response(conv_category, conv_lang or lang)
+        # 0. Fast-path: Scope Router (Conversational, Unrelated, Out-of-Scope)
+        category, sub_intent, conv_lang = ConversationalAgent.classify_message(q_raw)
+        if category in ["small_talk", "database_out_of_scope", "unrelated"]:
+            ans = ConversationalAgent.generate_response(category, conv_lang or lang, sub_type=sub_intent)
             return {
                 "answer": ans,
                 "sql": None,
@@ -74,7 +74,16 @@ class ExchangeQueryEngine:
                 "language": conv_lang or lang,
                 "verified": True,
                 "row_count": 0,
-                "sub_questions_count": 0
+                "sub_questions_count": 0,
+                "evidence": {
+                    "scope": category,
+                    "plan": None,
+                    "resolved_entities": [],
+                    "row_count": 0,
+                    "cross_checks": {},
+                    "verification_passed": True,
+                    "grounding_passed": True
+                }
             }
 
         # 1. Parse into Analytical Sub-Questions
@@ -100,7 +109,8 @@ class ExchangeQueryEngine:
             final_data = sub_results[0].get("data", [])
             primary_res = {
                 "verified": all(r.get("verified", True) for r in sub_results),
-                "row_count": sum(r.get("row_count", 0) for r in sub_results)
+                "row_count": sum(r.get("row_count", 0) for r in sub_results),
+                "evidence": sub_results[0].get("evidence")
             }
 
         return {
@@ -110,7 +120,8 @@ class ExchangeQueryEngine:
             "language": lang,
             "verified": primary_res.get("verified", True),
             "row_count": primary_res.get("row_count", 0),
-            "sub_questions_count": len(plans)
+            "sub_questions_count": len(plans),
+            "evidence": primary_res.get("evidence")
         }
 
     def _process_single_plan(
@@ -250,6 +261,17 @@ class ExchangeQueryEngine:
             compound_results=compound_data
         )
 
+        # Cross-checks and Grounding
+        from .evidence import EvidenceObject, CrossCheckEngine
+        cross_checks = CrossCheckEngine.run_cross_checks(
+            intent=intent,
+            cols=cols,
+            rows=rows,
+            metadata=metadata,
+            conn=conn,
+            executed_sql=guarded_sql or ""
+        )
+
         # E. Synthesize Natural Language Answer
         answer = self.synthesizer.synthesize_single(
             intent=intent,
@@ -260,6 +282,39 @@ class ExchangeQueryEngine:
             metadata=metadata,
             is_unanswerable=False,
             compound_data=compound_data if compound_data else None
+        )
+
+        grounding_ok = CrossCheckEngine.verify_grounding(answer, rows)
+
+        coverage_notes = []
+        if metadata.get("year") == 2026 or (metadata.get("year_range") and 2026 in metadata.get("year_range")):
+            coverage_notes.append("2026-yil ma'lumotlari 10 oyni (yanvar–oktabr) qamrab oladi (noto'liq yil).")
+
+        evidence = EvidenceObject(
+            plan={
+                "target_entity": plan.target_entity,
+                "metrics": plan.metrics,
+                "dimensions": plan.dimensions,
+                "filters": plan.filters,
+                "ranking_limit": plan.ranking_limit,
+                "ranking_order": plan.ranking_order
+            },
+            resolved_entities=[
+                {"type": "commodity", "val": metadata.get("commodity")},
+                {"type": "company", "val": metadata.get("company")},
+                {"type": "broker", "val": metadata.get("broker")},
+                {"type": "year", "val": metadata.get("year") or metadata.get("year_range")}
+            ],
+            executed_sql=guarded_sql or "",
+            row_count=len(rows),
+            columns=cols,
+            rows=rows[:20],
+            applied_filters={"year": metadata.get("year"), "region": metadata.get("region")},
+            coverage_notes=coverage_notes,
+            assumptions=["Only executed/partially executed deals count for sales volume unless specified otherwise."],
+            cross_checks=cross_checks,
+            verification_passed=v_report["is_valid"] and all(cross_checks.values()),
+            grounding_passed=grounding_ok
         )
 
         # F. Update Conversational Memory Context
@@ -313,7 +368,8 @@ class ExchangeQueryEngine:
             "answer": answer,
             "sql": guarded_sql,
             "data": data_preview,
-            "verified": v_report["is_valid"] and coverage["is_complete"],
+            "verified": v_report["is_valid"] and coverage["is_complete"] and all(cross_checks.values()),
             "row_count": len(rows),
-            "completeness_score": coverage["coverage_pct"]
+            "completeness_score": coverage["coverage_pct"],
+            "evidence": evidence.to_dict()
         }

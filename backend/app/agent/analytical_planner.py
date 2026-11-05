@@ -70,11 +70,23 @@ class AnalyticalPlanner:
     def _plan_single_question(index: int, q: str) -> SubQuestionPlan:
         q_lower = q.lower()
         
-        # 1. Year filter
+        # 1. Year filter & Year ranges
         year = None
-        m_year = re.search(r'\b(202[2-6])\b', q_lower)
-        if m_year:
-            year = int(m_year.group(1))
+        year_range = None
+        all_years = [int(y) for y in re.findall(r'\b(202[2-6])\b', q_lower)]
+        if len(all_years) >= 2:
+            year_range = (min(all_years), max(all_years))
+        elif len(all_years) == 1:
+            year = all_years[0]
+
+        # Quoted entity literal - safely ignore Uzbek apostrophes (o', g')
+        quotes = []
+        for pat in [r'«([^»]+)»', r'"([^"]+)"', r'„([^“]+)“', r'(?:^|\s)\'([^\']+)\'(?:\s|$|[.,!?])']:
+            for match in re.finditer(pat, q):
+                val = match.group(1).strip()
+                if len(val) >= 2:
+                    quotes.append(val)
+        quoted_entity = quotes[0] if quotes else None
 
         # 2. Ranking limit
         limit = None
@@ -96,6 +108,10 @@ class AnalyticalPlanner:
                     break
         if limit is None and any(w in q_lower for w in ["eng ko'p", "eng yirik", "eng katta", "eng faol", "кто крупнейший", "самый", "топ", "лидер"]):
             limit = 1 if any(w in q_lower for w in ["kompaniya kim", "kompaniyani", "broker kim", "qaysi kompaniya", "qaysi broker", "кто"]) else 5
+
+        ranking_order = "DESC"
+        if any(w in q_lower for w in ["eng kam", "eng past", "eng kichik", "наименьший", "худший", "минимум"]):
+            ranking_order = "ASC"
 
         # 3. Target Entity & Dimension Detection
         target_entity = "all_deals"
@@ -135,6 +151,24 @@ class AnalyticalPlanner:
                 metrics=[],
                 dimensions=[],
                 filters={"inn": m_inn.group(1)},
+                ranking_limit=1,
+                ranking_order="DESC",
+                is_compound=False,
+                compound_breakdowns=[],
+                required_components=required_components
+            )
+
+        # Check for company card / profile lookup
+        if any(w in q_lower for w in ["bu kompaniya", "bu korxona", "kompaniya qaysi", "kompaniya qayerda", "stir raqami", "kartochka", "о компании", "эта компания", "где находится эта компания", "stir raqam"]) and not any(w in q_lower for w in ["sotgan", "olgan", "xarid"]):
+            target_entity = "company_card"
+            required_components = ["company_name", "inn", "region"]
+            return SubQuestionPlan(
+                index=index,
+                raw_question=q,
+                target_entity=target_entity,
+                metrics=[],
+                dimensions=[],
+                filters={},
                 ranking_limit=1,
                 ranking_order="DESC",
                 is_compound=False,
@@ -245,6 +279,12 @@ class AnalyticalPlanner:
         filters = {}
         if year:
             filters["year"] = year
+        if year_range:
+            filters["year_range"] = year_range
+            if "by_year" not in dimensions:
+                dimensions.append("by_year")
+        if quoted_entity:
+            filters["quoted_entity"] = quoted_entity
 
         # Default required components fallback
         if not required_components:
@@ -258,7 +298,7 @@ class AnalyticalPlanner:
             dimensions=dimensions,
             filters=filters,
             ranking_limit=limit,
-            ranking_order="DESC",
+            ranking_order=ranking_order,
             is_compound=is_compound,
             compound_breakdowns=compound_breakdowns,
             required_components=required_components

@@ -48,6 +48,8 @@ class ChatResponse(BaseModel):
     language: str
     verified: Optional[bool] = True
     row_count: Optional[int] = 0
+    sub_questions_count: Optional[int] = 1
+    evidence: Optional[Dict[str, Any]] = None
 
 @app.get("/", response_class=HTMLResponse)
 async def serve_home(request: Request):
@@ -72,7 +74,9 @@ async def chat_endpoint(payload: ChatRequest):
         data=result.get("data", []),
         language=result.get("language", "uz"),
         verified=result.get("verified", True),
-        row_count=result.get("row_count", 0)
+        row_count=result.get("row_count", 0),
+        sub_questions_count=result.get("sub_questions_count", 1),
+        evidence=result.get("evidence")
     )
 
 @app.get("/api/health")
@@ -84,14 +88,36 @@ async def health_check():
         with get_readonly_connection() as conn:
             deals_count = conn.execute("SELECT COUNT(*) FROM deals").fetchone()[0]
             contracts_count = conn.execute("SELECT COUNT(*) FROM contracts").fetchone()[0]
+            participants_count = conn.execute("SELECT COUNT(*) FROM participants").fetchone()[0]
+            brokers_count = conn.execute("SELECT COUNT(*) FROM brokers").fetchone()[0]
         return {
             "status": "healthy",
+            "ready": True,
             "database": "connected",
             "total_deals": deals_count,
-            "total_contracts": contracts_count
+            "total_contracts": contracts_count,
+            "total_participants": participants_count,
+            "total_brokers": brokers_count,
+            "version": "2.0.0",
+            "commit_sha": "10dcdc7"
         }
     except Exception as e:
-        return JSONResponse(status_code=500, content={"status": "unhealthy", "error": str(e)})
+        return JSONResponse(status_code=500, content={"status": "unhealthy", "ready": False, "error": str(e)})
+
+@app.get("/api/version")
+async def version_info():
+    """Returns application release and dataset version info."""
+    return {
+        "name": "UZEX AI — Smart Stock Exchange Assistant",
+        "version": "2.0.0",
+        "commit_sha": "10dcdc7",
+        "supported_languages": ["uz-Latn", "uz-Cyrl", "ru"],
+        "dataset": {
+            "total_deals": 500000,
+            "date_range": "2022-01-03 to 2026-10-30",
+            "coverage_notes": "2026 data partial: 10 months (Jan-Oct 2026)"
+        }
+    }
 
 if __name__ == "__main__":
     import uvicorn

@@ -74,7 +74,10 @@ function renderMarkdown(md) {
     return parsed;
 }
 
-function appendMessage(sender, content, sql = null, isError = false) {
+const wakingBanner = document.getElementById('wakingBanner');
+const wakingText = document.getElementById('wakingText');
+
+function appendMessage(sender, content, sql = null, isError = false, evidence = null) {
     const msgDiv = document.createElement('div');
     msgDiv.className = `message ${sender} ${isError ? 'error' : ''}`;
 
@@ -90,13 +93,45 @@ function appendMessage(sender, content, sql = null, isError = false) {
     } else {
         contentDiv.innerHTML = renderMarkdown(content);
 
-        // Add SQL transparency details if available
-        if (sql && !isError) {
+        // Add Evidence & SQL transparency details if available
+        if ((sql || evidence) && !isError) {
             const sqlDetails = document.createElement('details');
             sqlDetails.className = 'sql-accordion';
+
+            let evidenceHtml = '';
+            if (evidence) {
+                const planEntity = evidence.plan ? evidence.plan.target_entity : 'general';
+                const limit = evidence.plan && evidence.plan.ranking_limit ? ` (Limit: ${evidence.plan.ranking_limit})` : '';
+                
+                const entities = (evidence.resolved_entities || [])
+                    .filter(e => e && e.val)
+                    .map(e => `<code>${e.type}: ${typeof e.val === 'object' ? JSON.stringify(e.val) : e.val}</code>`)
+                    .join(' ') || '<em>Barcha birja</em>';
+
+                const checks = Object.entries(evidence.cross_checks || {})
+                    .map(([k, v]) => `<span class="check-badge ${v ? 'pass' : 'fail'}">${v ? '✓' : '✗'} ${k}</span>`)
+                    .join(' ');
+
+                const caveats = (evidence.coverage_notes || [])
+                    .map(c => `<div class="caveat-badge">⚠️ ${c}</div>`)
+                    .join('');
+
+                evidenceHtml = `
+                    <div class="evidence-container">
+                        <div class="evidence-row"><strong>📌 Reja / План:</strong> <code>${planEntity}${limit}</code> | Qatorlar: <code>${evidence.row_count || 0}</code></div>
+                        <div class="evidence-row"><strong>🎯 Aniqlangan subyektlar:</strong> ${entities}</div>
+                        <div class="evidence-row"><strong>🔬 Tekshiruvlar (Cross-checks):</strong> ${checks || '<em>Avtomatik tasdiqlangan</em>'}</div>
+                        ${caveats}
+                    </div>
+                `;
+            }
+
+            const sqlPre = sql ? `<pre><code>${sql}</code></pre>` : '';
+
             sqlDetails.innerHTML = `
-                <summary>🔍 Bajarilgan SQL So'rovi / Исполненный SQL</summary>
-                <pre><code>${sql}</code></pre>
+                <summary>🔍 Tahliliy dalillar va SQL / Аналитические свидетельства и SQL</summary>
+                ${evidenceHtml}
+                ${sqlPre}
             `;
             contentDiv.appendChild(sqlDetails);
         }
@@ -109,6 +144,40 @@ function appendMessage(sender, content, sql = null, isError = false) {
 }
 
 const sessionId = 'session_' + Math.random().toString(36).substr(2, 9);
+
+function showWakingState(msg) {
+    if (wakingBanner) {
+        if (msg && wakingText) wakingText.textContent = msg;
+        wakingBanner.style.display = 'flex';
+    }
+}
+
+function hideWakingState() {
+    if (wakingBanner) {
+        wakingBanner.style.display = 'none';
+    }
+}
+
+async function pollHealthUntilReady(maxWaitMs = 120000) {
+    const startTime = Date.now();
+    let delay = 2000;
+    while (Date.now() - startTime < maxWaitMs) {
+        try {
+            const res = await fetch('/api/health');
+            if (res.ok) {
+                const data = await res.json();
+                if (data.ready || data.status === 'healthy') {
+                    return true;
+                }
+            }
+        } catch (e) {
+            // Server waking, continue waiting
+        }
+        await new Promise(r => setTimeout(r, delay));
+        delay = Math.min(delay * 1.5, 8000);
+    }
+    return false;
+}
 
 async function handleSend(e) {
     if (e) e.preventDefault();
@@ -126,8 +195,13 @@ async function handleSend(e) {
     userInput.disabled = true;
     scrollToBottom();
 
+    // Cold-start timer: if request takes > 3.5s, trigger waking alert
+    const coldStartTimer = setTimeout(() => {
+        showWakingState("⚡ Server uyqu rejimidan uyg'onmoqda (Render Free). Iltimos, 30-60 soniya kuting... / Сервер выходит из спящего режима...");
+    }, 3500);
+
     try {
-        const response = await fetch('/api/chat', {
+        let response = await fetch('/api/chat', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
@@ -135,14 +209,33 @@ async function handleSend(e) {
             body: JSON.stringify({ message: query, session_id: sessionId })
         });
 
+        clearTimeout(coldStartTimer);
+
+        // If server was cold and returned 502/503/504 gateway waking error
+        if (response.status === 502 || response.status === 503 || response.status === 504) {
+            showWakingState("⚡ Render Free serveri uyg'onmoqda... Tayyor bo'lgach so'rov avtomatik qayta yuboriladi.");
+            const ready = await pollHealthUntilReady(90000);
+            if (ready) {
+                response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: query, session_id: sessionId })
+                });
+            }
+        }
+
+        hideWakingState();
+
         if (!response.ok) {
             const errData = await response.json().catch(() => ({}));
             throw new Error(errData.detail || `Server xatosi: ${response.status}`);
         }
 
         const data = await response.json();
-        appendMessage('ai', data.answer, data.sql);
+        appendMessage('ai', data.answer, data.sql, false, data.evidence);
     } catch (err) {
+        clearTimeout(coldStartTimer);
+        hideWakingState();
         console.error('API Error:', err);
         const friendlyError = "Server bilan aloqada xatolik yuz berdi. Iltimos, server ishga tushirilganligini tekshiring yoki savolni qayta yuboring.\n(Ошибка соединения с сервером. Пожалуйста, повторите запрос.)";
         appendMessage('ai', friendlyError, null, true);
