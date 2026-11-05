@@ -31,13 +31,14 @@ def get_readonly_connection(db_path: Optional[str] = None) -> duckdb.DuckDBPyCon
     """
     Returns a read-only DuckDB connection.
     Used by the AI Agent and API query engines to strictly prevent mutations and SQL injection.
+    Configured with max_memory ceiling for safe operation within Render Free tier limits (512MB RAM).
     """
     path = get_db_path(db_path)
     if not path.exists():
         print(f"[UZEX AI] Database file not found at: {path}. Auto-importing 500,000 transactions from dataset/original...")
         from app.database.importer import import_all_data
         import_all_data(db_path=str(path))
-    return duckdb.connect(database=str(path), read_only=True)
+    return duckdb.connect(database=str(path), read_only=True, config={'max_memory': '400MB'})
 
 @contextmanager
 def writable_db(db_path: Optional[str] = None) -> Generator[duckdb.DuckDBPyConnection, None, None]:

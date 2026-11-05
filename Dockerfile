@@ -20,13 +20,13 @@ COPY static/ /app/static/
 
 ENV PYTHONPATH=/app/backend
 ENV APP_HOST=0.0.0.0
-ENV APP_PORT=8000
+ENV PORT=10000
 
 # Pre-build DuckDB database from dataset/original CSVs
 RUN python /app/backend/app/database/importer.py
 
-# Expose port
-EXPOSE 8000
+# Expose Render standard port
+EXPOSE 10000
 
-# Run FastAPI app
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Run FastAPI app with dynamic PORT expansion
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-10000}"]

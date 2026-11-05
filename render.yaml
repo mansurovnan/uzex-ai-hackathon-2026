@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: uzex-ai-hackathon-2026
+    runtime: docker
+    plan: free
+    region: frankfurt
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /healthz
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: APP_HOST
+        value: 0.0.0.0
+      - key: DB_PATH
+        value: /app/dataset/processed/uzex_data.duckdb

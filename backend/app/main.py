@@ -76,8 +76,10 @@ async def chat_endpoint(payload: ChatRequest):
     )
 
 @app.get("/api/health")
+@app.get("/health")
+@app.get("/healthz")
 async def health_check():
-    """System and database healthcheck."""
+    """System and database healthcheck for Render and cloud monitoring."""
     try:
         with get_readonly_connection() as conn:
             deals_count = conn.execute("SELECT COUNT(*) FROM deals").fetchone()[0]
@@ -93,4 +95,6 @@ async def health_check():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    port = int(os.environ.get("PORT", os.environ.get("APP_PORT", 10000)))
+    host = os.environ.get("APP_HOST", "0.0.0.0")
+    uvicorn.run("app.main:app", host=host, port=port)
