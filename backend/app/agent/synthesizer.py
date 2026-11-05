@@ -47,6 +47,33 @@ class ResponseSynthesizer:
                     "компаниям-продавцам и покупателям, брокерам и курсам валют."
                 )
 
+        # Handle synthetic disclaimer
+        if intent == "synthetic_disclaimer":
+            if lang == "uz":
+                return (
+                    "ℹ️ **UZEX Ma'lumotlar To'plami Bo'yicha Rasmiy Izoh:**\n\n"
+                    "Ushbu ma'lumotlar to'plami **UZEX AI Hackathon 2026** doirasida tahliliy tizimlar va sun'iy intellekt modellarini "
+                    "sinovdan o'tkazish uchun maxsus ishlab chiqilgan **yuqori aniqlikdagi sintetik (taqlidiy) ma'lumotlar modelidir**.\n\n"
+                    "**Asosiy xususiyatlari:**\n"
+                    "- 📊 **Hajmi:** 2022–2026 yillarga oid **500 000 ta birja bitimi**;\n"
+                    "- 🏢 **Bozor ishtirokchilari:** 14 000 dan ortiq korxona (klasterlar, zavodlar) va 120 ta akkreditatsiyadan o'tgan brokerlik idorasi;\n"
+                    "- 💵 **Valyuta kurslari:** O'zbekiston Respublikasi Markaziy bankining har kungi real rasmiy USD/UZS kurslari bilan integratsiya qilingan;\n"
+                    "- ⚖️ **Bozor qoidalari:** Barcha narx shakllanishi, lot hajmlari, kontrakt turlari (Spot, Forward, Ichki va Eksport) va to'lov/ijro holatlari UZEX real birja mexanizmlariga 100% mos ravishda modellashtirilgan.\n\n"
+                    "💡 *Tavsiya:* Istalgan tovar, kompaniya, broker yoki yillik dinamika bo'yicha aniq hisob-kitoblarni so'rashingiz mumkin."
+                )
+            else:
+                return (
+                    "ℹ️ **Официальное пояснение по набору данных UZEX:**\n\n"
+                    "Данный датасет представляет собой **высокоточную синтетическую модель данных**, созданную в рамках "
+                    "**UZEX AI Hackathon 2026** для разработки и тестирования интеллектуальных аналитических систем.\n\n"
+                    "**Ключевые параметры модели:**\n"
+                    "- 📊 **Объем:** **500 000 биржевых сделок** за период с 2022 по 2026 год;\n"
+                    "- 🏢 **Участники торгов:** Более 14 000 предприятий (кластеры, заводы) и 120 аккредитованных брокерских контор;\n"
+                    "- 💵 **Курсы валют:** Интегрированы официальные ежедневные курсы доллара США ЦБ РУз;\n"
+                    "- ⚖️ **Рыночные правила:** Структура контрактов (спот, форвард, экспорт, внутренний рынок), диапазоны цен и правила исполнения соответствуют регламентам УзРТСБ.\n\n"
+                    "💡 *Подсказка:* Вы можете запросить аналитику по конкретным товарам, компаниям, брокерам или динамике торгов."
+                )
+
         if not rows:
             return (
                 "Kechirasiz, so'rovingiz bo'yicha ma'lumotlar bazasida mos yozuvlar topilmadi."
@@ -143,6 +170,23 @@ class ResponseSynthesizer:
 
             return res
 
+        # 4.1 Company Brokers (Brokers intermediating for a company)
+        if intent == "company_brokers":
+            company = metadata.get("company", ("", "Kompaniya"))
+            inn, name = company if isinstance(company, tuple) else ("", str(company))
+            year_str = f" ({metadata.get('year')}-yil)" if metadata.get("year") else ""
+            if lang == "uz":
+                header = f"🤝 **`{name}` kompaniyasi savdo qilgan asosiy brokerlar{year_str}:**\n\n"
+                table = "| № | Kod | Brokerlik idorasi nomi | Bitimlar soni | Aylanma summasi (so'm) |\n|---|---|---|---|---|\n"
+            else:
+                header = f"🤝 **Основные брокеры компании `{name}`{year_str}:**\n\n"
+                table = "| № | Код | Название брокерской конторы | Сделок | Торговый оборот (сум) |\n|---|---|---|---|---|\n"
+
+            for i, r in enumerate(rows, 1):
+                b_code, b_name, count, turnover = r
+                table += f"| {i} | `{b_code}` | **{b_name}** | {format_num(count)} | {format_num(turnover)} |\n"
+            return header + table
+
         # 5. Top Brokers
         if intent == "broker_top":
             year_str = f" ({metadata.get('year')}-yil)" if metadata.get("year") else ""
@@ -209,15 +253,216 @@ class ResponseSynthesizer:
                     f"- **Средневзвешенная цена:** {format_num(avg_p)} сум/{unit}"
                 )
 
-        # 9. Top Products
+        # 9. Product Catalog
+        if intent == "product_catalog":
+            year_str = f" ({metadata.get('year')}-yil)" if metadata.get("year") else ""
+            if lang == "uz":
+                header = (
+                    f"📦 **UZEX Birjasida Savdosi O'tkaziladigan Mahsulotlar Katalogi{year_str}:**\n\n"
+                    f"Birja savdolarida tovarlar asosiy sanoat va xomashyo toifalariga ajratilgan. "
+                    f"Quyida har bir toifadagi tovar turlari soni, tuzilgan bitimlar va jami savdo aylanmasi keltirilgan:\n\n"
+                )
+                table = "| № | Tovar toifasi (Kategoriya) | Tovar turlari soni | Bitimlar soni | Jami savdo aylanmasi (so'm) |\n|---|---|---|---|---|\n"
+            else:
+                header = (
+                    f"📦 **Каталог торгуемых товаров на бирже UZEX{year_str}:**\n\n"
+                    f"Биржевой товарный реестр сгруппирован по ключевым отраслевым категориям. "
+                    f"Ниже представлены количество контрактов, сделок и торговые обороты по категориям:\n\n"
+                )
+                table = "| № | Категория товаров | Уникальных товаров | Сделок | Общий оборот (сум) |\n|---|---|---|---|---|\n"
+
+            for i, r in enumerate(rows, 1):
+                cat, unique_cnt, deals_cnt, sales = r
+                table += f"| {i} | **{cat}** | {format_num(unique_cnt)} ta | {format_num(deals_cnt)} | {format_num(sales)} |\n"
+
+            footer = (
+                "\n💡 *Tavsiya:* Muayyan tovar (masalan, *sement*, *paxta*, *bug'doy*, *mis*) bo'yicha batafsil ma'lumot olish uchun: `2024-yilda sement narxlari qanday bo'lgan?` yoki `Paxtani qaysi kompaniyalar sotgan?` deb so'rashingiz mumkin."
+                if lang == "uz"
+                else "\n💡 *Подсказка:* Для детального анализа конкретного товара (например, *цемент*, *хлопок*, *пшеница*, *медь*) спросите: «Каковы цены на цемент в 2024 году?» или «Кто продавал хлопок?»"
+            )
+            return header + table + footer
+
+        # 9.1 Product Sellers (who sold a specific commodity)
+        if intent == "product_sellers":
+            comm = metadata.get("commodity", "Mahsulot")
+            year_str = f" ({metadata.get('year')}-yil)" if metadata.get("year") else ""
+            top_company = rows[0][1] if rows else "Yetakchi kompaniya"
+            top_sales = format_num(rows[0][6]) if rows else "0"
+
+            if lang == "uz":
+                header = (
+                    f"🏭 **'{comm.title()}' bo'yicha eng yirik sotuvchilar{year_str}:**\n\n"
+                    f"Ko'rsatilgan davrda ushbu mahsulot bo'yicha eng yuqori sotuv hajmiga ega kompaniya — **{top_company}** "
+                    f"(savdo hajmi: **{top_sales} so'm**).\n\n"
+                )
+                table = "| № | STIR (INN) | Sotuvchi korxona nomi | Hudud | Bitimlar | Sotilgan hajm | Savdo summasi (so'm) |\n|---|---|---|---|---|---|---|\n"
+            else:
+                header = (
+                    f"🏭 **Крупнейшие продавцы по товару '{comm.title()}'{year_str}:**\n\n"
+                    f"Лидером по поставкам данного товара является компания **{top_company}** "
+                    f"с объемом продаж **{top_sales} сум**.\n\n"
+                )
+                table = "| № | ИНН | Предприятие-продавец | Регион | Сделок | Объем поставок | Сумма продаж (сум) |\n|---|---|---|---|---|---|---|\n"
+
+            for i, r in enumerate(rows, 1):
+                inn, name, reg, count, vol, unit, sales = r
+                table += f"| {i} | `{inn}` | **{name}** | {reg} | {format_num(count)} | {format_num(vol)} {unit} | {format_num(sales)} |\n"
+
+            footer = (
+                f"\n💡 *Tavsiya:* Yetakchi korxona `{top_company}` qaysi brokerlar orqali savdo qilganini bilish uchun: `Ushbu kompaniyaning brokerlari kim?` deb so'rashingiz mumkin."
+                if lang == "uz"
+                else f"\n💡 *Подсказка:* Чтобы узнать брокеров лидера `{top_company}`, спросите: «Какие брокеры работали с этой компанией?»"
+            )
+            return header + table + footer
+
+        # 9.2 Product Buyers (who bought a specific commodity)
+        if intent == "product_buyers":
+            comm = metadata.get("commodity", "Mahsulot")
+            year_str = f" ({metadata.get('year')}-yil)" if metadata.get("year") else ""
+            top_buyer = rows[0][1] if rows else "Yetakchi xaridor"
+            top_spend = format_num(rows[0][6]) if rows else "0"
+
+            if lang == "uz":
+                header = (
+                    f"🛒 **'{comm.title()}' bo'yicha eng yirik xaridorlar{year_str}:**\n\n"
+                    f"Ushbu mahsulotning eng yirik xaridori — **{top_buyer}** (xarid summasi: **{top_spend} so'm**).\n\n"
+                )
+                table = "| № | STIR (INN) | Xaridor korxona nomi | Hudud | Bitimlar | Xarid hajmi | Xarid summasi (so'm) |\n|---|---|---|---|---|---|---|\n"
+            else:
+                header = (
+                    f"🛒 **Крупнейшие покупатели по товару '{comm.title()}'{year_str}:**\n\n"
+                    f"Крупнейшим покупателем данного товара является компания **{top_buyer}** (сумма закупок: **{top_spend} сум**).\n\n"
+                )
+                table = "| № | ИНН | Предприятие-покупатель | Регион | Сделок | Объем закупок | Сумма закупок (сум) |\n|---|---|---|---|---|---|---|\n"
+
+            for i, r in enumerate(rows, 1):
+                inn, name, reg, count, vol, unit, purchases = r
+                table += f"| {i} | `{inn}` | **{name}** | {reg} | {format_num(count)} | {format_num(vol)} {unit} | {format_num(purchases)} |\n"
+
+            footer = (
+                f"\n💡 *Tavsiya:* `{top_buyer}` korxonasining barcha xaridlari bo'yicha tahlilni olish uchun STIR orqali so'rashingiz mumkin."
+                if lang == "uz"
+                else f"\n💡 *Подсказка:* Вы можете запросить карточку предприятия `{top_buyer}` по ИНН."
+            )
+            return header + table + footer
+
+        # 9.3 Product Brokers (who intermediated a specific commodity)
+        if intent == "product_brokers":
+            comm = metadata.get("commodity", "Mahsulot")
+            year_str = f" ({metadata.get('year')}-yil)" if metadata.get("year") else ""
+            top_broker = rows[0][1] if rows else "Yetakchi broker"
+            top_turnover = format_num(rows[0][3]) if rows else "0"
+
+            if lang == "uz":
+                header = (
+                    f"🤝 **'{comm.title()}' bo'yicha eng faol brokerlar reytingi{year_str}:**\n\n"
+                    f"Ushbu tovar savdosida eng yuqori vositachilik aylanmasini **{top_broker}** ko'rsatgan (**{top_turnover} so'm**).\n\n"
+                )
+                table = "| № | Kod | Brokerlik idorasi nomi | Bitimlar soni | Aylanma summasi (so'm) |\n|---|---|---|---|---|\n"
+            else:
+                header = (
+                    f"🤝 **Ведущие брокеры по сделкам с товаром '{comm.title()}'{year_str}:**\n\n"
+                    f"Лидером среди брокеров по данному направлению является контора **{top_broker}** (оборот: **{top_turnover} сум**).\n\n"
+                )
+                table = "| № | Код | Название брокерской конторы | Сделок | Торговый оборот (сум) |\n|---|---|---|---|---|\n"
+
+            for i, r in enumerate(rows, 1):
+                b_code, b_name, count, turnover = r
+                table += f"| {i} | `{b_code}` | **{b_name}** | {format_num(count)} | {format_num(turnover)} |\n"
+
+            return header + table
+
+        # 9.4 Product Regions (regional production / sales of a commodity)
+        if intent == "product_regions":
+            comm = metadata.get("commodity", "Mahsulot")
+            year_str = f" ({metadata.get('year')}-yil)" if metadata.get("year") else ""
+            top_region = rows[0][0] if rows else "Yetakchi hudud"
+            top_sales = format_num(rows[0][4]) if rows else "0"
+
+            if lang == "uz":
+                header = (
+                    f"📍 **'{comm.title()}' yetkazib berish bo'yicha hududlar tahlili{year_str}:**\n\n"
+                    f"Eng asosiy sotuvchi hudud — **{top_region}** (savdo hajmi: **{top_sales} so'm**).\n\n"
+                )
+                table = "| № | Hudud (Viloyat) | Bitimlar soni | Sotilgan hajm | Savdo summasi (so'm) |\n|---|---|---|---|---|\n"
+            else:
+                header = (
+                    f"📍 **Региональная структура предложения по товару '{comm.title()}'{year_str}:**\n\n"
+                    f"Ведущим регионом-поставщиком является **{top_region}** (объем реализации: **{top_sales} сум**).\n\n"
+                )
+                table = "| № | Регион | Сделок | Поставленный объем | Сумма продаж (сум) |\n|---|---|---|---|---|\n"
+
+            for i, r in enumerate(rows, 1):
+                reg, count, vol, unit, sales = r
+                table += f"| {i} | **{reg}** | {format_num(count)} | {format_num(vol)} {unit} | {format_num(sales)} |\n"
+
+            return header + table
+
+        # 9.5 Product Price Range / Quotations
+        if intent == "product_price_range":
+            comm = metadata.get("commodity", "Mahsulot")
+            year_str = f" ({metadata.get('year')}-yil)" if metadata.get("year") else ""
+            p_name, p_unit, p_curr, min_p, max_p, avg_p, deals_cnt, turnover = rows[0]
+
+            if lang == "uz":
+                header = (
+                    f"🏷️ **'{comm.title()}' Narxlar Diapazoni va Dinamikasi{year_str}:**\n\n"
+                    f"Birja kotirovkalari tahliliga ko'ra, eng faol sotilgan nav — **{p_name}** bo'lib, "
+                    f"o'rtacha narx 1 {p_unit} uchun **{format_num(avg_p)} {p_curr}**ni tashkil etdi.\n\n"
+                )
+                table = "| № | Mahsulot navi / shartnoma | Birlik | Valyuta | Minimal narx | O'rtacha narx | Maksimal narx | Bitimlar |\n|---|---|---|---|---|---|---|---|\n"
+            else:
+                header = (
+                    f"🏷️ **Ценовой диапазон и котировки по товару '{comm.title()}'{year_str}:**\n\n"
+                    f"По данным биржевых котировок, средневзвешенная цена по контракту **{p_name}** "
+                    f"составила **{format_num(avg_p)} {p_curr}** за 1 {p_unit}.\n\n"
+                )
+                table = "| № | Наименование контракта | Ед. | Валюта | Мин. цена | Средняя цена | Макс. цена | Сделок |\n|---|---|---|---|---|---|---|---|\n"
+
+            for i, r in enumerate(rows, 1):
+                name, unit, curr, min_val, max_val, avg_val, count, _ = r
+                table += f"| {i} | **{name}** | {unit} | {curr} | {format_num(min_val)} | {format_num(avg_val)} | {format_num(max_val)} | {format_num(count)} |\n"
+
+            footer = (
+                f"\n💡 *Tavsiya:* Ushbu mahsulotni sotgan eng yirik kompaniyalarni ko'rish uchun: `Uni qaysi kompaniyalar sotgan?` deb so'rashingiz mumkin."
+                if lang == "uz"
+                else f"\n💡 *Подсказка:* Чтобы увидеть ведущих поставщиков, спросите: «Кто продавал этот товар?»"
+            )
+            return header + table + footer
+
+        # 9.6 Top Products
         if intent == "top_products":
             year_str = f" ({metadata.get('year')}-yil)" if metadata.get("year") else ""
-            header = f"📦 **Eng ko'p sotilgan tovarlar reytingi{year_str}:**\n\n" if lang == "uz" else f"📦 **Рейтинг самых продаваемых товаров{year_str}:**\n\n"
-            table = "| № | Tovar | Bitimlar | Jami Hajm | Aylanma (so'm) |\n|---|---|---|---|---|\n" if lang == "uz" else "| № | Товар | Сделок | Общий Объем | Оборот (сум) |\n|---|---|---|---|---|\n"
+            top_prod_name = rows[0][0]
+            top_turnover = format_num(rows[0][4])
+            top_vol = format_num(rows[0][3])
+            top_unit = rows[0][1]
+
+            if lang == "uz":
+                header = (
+                    f"📦 **Eng ko'p sotilgan tovarlar reytingi{year_str}:**\n\n"
+                    f"Birja savdolari natijalariga ko'ra, eng yuqori aylanmaga ega mahsulot — **{top_prod_name}** "
+                    f"(jami savdo aylanmasi: **{top_turnover} so'm**, hajm: **{top_vol} {top_unit}**).\n\n"
+                )
+                table = "| № | Tovar nomi | O'lchov birligi | Bitimlar soni | Jami hajm | Savdo aylanmasi (so'm) |\n|---|---|---|---|---|---|\n"
+            else:
+                header = (
+                    f"📦 **Рейтинг самых продаваемых биржевых товаров{year_str}:**\n\n"
+                    f"Лидером по объему торгов является **{top_prod_name}** "
+                    f"с оборотом **{top_turnover} сум** (объем: **{top_vol} {top_unit}**).\n\n"
+                )
+                table = "| № | Наименование товара | Ед. изм. | Сделок | Общий объем | Оборот (сум) |\n|---|---|---|---|---|---|\n"
+
             for i, r in enumerate(rows, 1):
-                p_name, count, vol, unit, turnover = r
-                table += f"| {i} | {p_name} | {format_num(count)} | {format_num(vol)} {unit} | {format_num(turnover)} |\n"
-            return header + table
+                p_name, unit, count, vol, turnover = r
+                table += f"| {i} | **{p_name}** | {unit} | {format_num(count)} | {format_num(vol)} | {format_num(turnover)} |\n"
+
+            footer = (
+                f"\n💡 *Tavsiya:* Yetakchi mahsulot `{top_prod_name}` bo'yicha batafsil tahlil olish uchun: `Uni qaysi kompaniyalar sotgan?` yoki `Uning narxlari qanday?` deb so'rashingiz mumkin."
+                if lang == "uz"
+                else f"\n💡 *Подсказка:* Чтобы узнать подробности о лидере `{top_prod_name}`, спросите: «Кто продавал этот товар?» или «Каковы цены на него?»"
+            )
+            return header + table + footer
 
         # 10. Cancelled Deals
         if intent == "cancelled_deals":

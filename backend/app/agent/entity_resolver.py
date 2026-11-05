@@ -110,26 +110,33 @@ class EntityResolver:
         Resolves commodity terms across Uzbek Latin, Uzbek Cyrillic, and Russian.
         """
         t = self._clean_text(text)
-        for uz_term, ru_term in COMMODITY_MAP.items():
-            if self._clean_text(uz_term) in t:
-                return ru_term
+        # Sort by length descending so longer specific terms match first
+        sorted_uz = sorted(COMMODITY_MAP.items(), key=lambda x: len(x[0]), reverse=True)
+        for uz_term, ru_term in sorted_uz:
+            clean_term = self._clean_text(uz_term)
+            if len(clean_term) <= 3:
+                if re.search(r'\b' + re.escape(clean_term) + r'\b', t):
+                    return ru_term
+            else:
+                if clean_term in t:
+                    return ru_term
 
         # Check Russian standard commodities
         common_ru_map = {
+            "портландцемент": "портландцемент",
+            "автобензин": "автобензин",
+            "полиэтилен": "полиэтилен",
             "катод": "катод",
             "медный": "катод",
             "медь": "катод",
             "цемент": "цемент",
-            "портландцемент": "портландцемент",
             "пшеница": "пшеница",
             "хлопок": "хлопок",
             "сахар": "сахар",
             "масло": "масло",
             "селитра": "селитра",
             "уголь": "уголь",
-            "автобензин": "автобензин",
             "бензин": "автобензин",
-            "полиэтилен": "полиэтилен",
             "шрот": "шрот",
             "битум": "битум",
             "прокат": "прокат",
@@ -138,8 +145,12 @@ class EntityResolver:
             "рис": "рис"
         }
         for cr, mapped_val in common_ru_map.items():
-            if cr in t:
-                return mapped_val
+            if len(cr) <= 3:
+                if re.search(r'\b' + re.escape(cr) + r'\b', t):
+                    return mapped_val
+            else:
+                if cr in t:
+                    return mapped_val
         return None
 
     def resolve_category(self, text: str) -> Optional[str]:

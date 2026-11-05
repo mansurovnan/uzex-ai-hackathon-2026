@@ -84,7 +84,17 @@ class AnalyticalPlanner:
                 limit = int(m_limit.group(1))
             except ValueError:
                 limit = None
-        elif any(w in q_lower for w in ["eng ko'p", "eng yirik", "eng katta", "eng faol", "кто крупнейший", "самый", "топ", "лидер"]):
+        else:
+            word_num_map = {
+                "bitta": 1, "bita": 1, "ikkita": 2, "uchta": 3, "to'rtta": 4, "tortta": 4, 
+                "beshta": 5, "oltita": 6, "yettita": 7, "sakkizta": 8, "to'qqizta": 9, "o'nta": 10,
+                "один": 1, "два": 2, "три": 3, "четыре": 4, "пять": 5, "шесть": 6, "семь": 7, "восемь": 8, "девять": 9, "десять": 10
+            }
+            for wnum, val in word_num_map.items():
+                if wnum in q_lower:
+                    limit = val
+                    break
+        if limit is None and any(w in q_lower for w in ["eng ko'p", "eng yirik", "eng katta", "eng faol", "кто крупнейший", "самый", "топ", "лидер"]):
             limit = 1 if any(w in q_lower for w in ["kompaniya kim", "kompaniyani", "broker kim", "qaysi kompaniya", "qaysi broker", "кто"]) else 5
 
         # 3. Target Entity & Dimension Detection
@@ -94,6 +104,24 @@ class AnalyticalPlanner:
         is_compound = False
         compound_breakdowns = []
         required_components = []
+
+        # Check for synthetic data disclaimer / authenticity questions
+        if any(w in q_lower for w in ["sintetik", "haqiqiy", "haqiqatdan", "haqiqiymi", "qayerdan olingan", "qayerdan kelgan", "синтетическ", "реальные", "настоящие ли данные", "откуда данные", "откуда эти данные", "откуда", "достоверность", "источник данных"]):
+            target_entity = "synthetic_disclaimer"
+            required_components.append("synthetic_disclaimer")
+            return SubQuestionPlan(
+                index=index,
+                raw_question=q,
+                target_entity=target_entity,
+                metrics=[],
+                dimensions=[],
+                filters={},
+                ranking_limit=1,
+                ranking_order="DESC",
+                is_compound=False,
+                compound_breakdowns=[],
+                required_components=required_components
+            )
 
         # Check for direct 9-digit INN lookup
         m_inn = re.search(r'\b(\d{9})\b', q_lower)
@@ -180,6 +208,18 @@ class AnalyticalPlanner:
             target_entity = "cancelled_deals"
             metrics.extend(["cancelled_count", "cancelled_amount_uzs", "cancellation_percentage"])
             required_components.extend(["cancelled_count", "cancelled_amount", "percentage"])
+
+        # Product Catalog (What products are traded?)
+        elif any(w in q_lower for w in ["qanday mahsulot", "qanday tovar", "tovarlar ro'yxati", "mahsulotlar ro'yxati", "qaysi tovarlar", "какие товар", "список товар", "каталог товар", "что продается"]):
+            target_entity = "product_catalog"
+            metrics.extend(["unique_products", "deals_count", "turnover_uzs"])
+            required_components.extend(["product_categories", "deals_count"])
+
+        # Top Products / Rankings
+        elif any(w in q_lower for w in ["eng ko'p", "eng katta", "top tovar", "reyting", "ommapop", "лидер", "популярн", "продаваем", "топ товар", "топ самых"]) and any(w in q_lower for w in ["tovar", "mahsulot", "товар", "продаваем"]):
+            target_entity = "top_products"
+            metrics.extend(["total_volume", "total_turnover", "deals_count"])
+            required_components.extend(["top_products_list", "turnover"])
 
         # Commodities
         elif any(w in q_lower for w in ["sement", "bug'doy", "bugdoy", "paxta", "shakar", "yog'", "yog", "mis", "katod", "benzin", "ko'mir", "цемент", "пшеница", "хлопок", "сахар", "масло", "медь", "катод", "уголь"]):

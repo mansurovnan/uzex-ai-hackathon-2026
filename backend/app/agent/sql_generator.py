@@ -102,7 +102,7 @@ class UniversalSQLGenerator:
         )
         
         # Override limit if plan explicitly specified one
-        if plan.ranking_limit and "LIMIT" in res.get("sql", ""):
+        if plan.ranking_limit and res.get("sql") and "LIMIT" in res["sql"]:
             res["sql"] = re.sub(r'LIMIT \d+', f'LIMIT {plan.ranking_limit}', res["sql"])
             
         return res
@@ -139,6 +139,225 @@ class UniversalSQLGenerator:
         """
         year_filter = f"EXTRACT(YEAR FROM deal_date) = {year}" if year else "1=1"
         region_filter = f"(seller_region LIKE '%{region}%' OR buyer_region LIKE '%{region}%')" if region else "1=1"
+
+        # -------------------------------------------------------------
+        # DIMENSION 0: SYNTHETIC DATA DISCLAIMER / AUTHENTICITY
+        # -------------------------------------------------------------
+        if any(w in q_lower for w in ["sintetik", "haqiqiy", "haqiqatdan", "haqiqiymi", "qayerdan olingan", "qayerdan kelgan", "синтетическ", "реальные", "настоящие ли данные", "откуда данные", "откуда эти данные", "откуда", "достоверность", "источник данных"]):
+            return {"sql": None, "intent": "synthetic_disclaimer", "metadata": {}}
+
+        # -------------------------------------------------------------
+        # DIMENSION 0.1: TRADED PRODUCT CATALOG
+        # -------------------------------------------------------------
+        if any(w in q_lower for w in ["qanday mahsulot", "qanday tovar", "tovarlar ro'yxati", "mahsulotlar ro'yxati", "qaysi tovarlar", "tovar turlari", "какие товар", "список товар", "каталог товар", "что продается"]):
+            sql = f"""
+            SELECT 
+                product_category,
+                COUNT(DISTINCT product_raw_name) AS unique_products,
+                COUNT(*) AS deals_count,
+                SUM(executed_amount_uzs) AS total_sales_uzs
+            FROM v_deals_enriched
+            WHERE {year_filter}
+            GROUP BY product_category
+            ORDER BY total_sales_uzs DESC
+            """
+            return {"sql": sql, "intent": "product_catalog", "metadata": {"year": year}}
+
+        # -------------------------------------------------------------
+        # DIMENSION 0.15: COMPANY'S BROKERS (When company is active and asking for its brokers)
+        # -------------------------------------------------------------
+        if company and any(w in q_lower for w in ["broker", "брокер"]):
+            inn, name = company
+            sql = f"""
+            SELECT 
+                seller_broker_code AS broker_code,
+                seller_broker_name AS broker_name,
+                COUNT(*) AS deals_count,
+                SUM(executed_amount_uzs) AS turnover_uzs
+            FROM v_deals_enriched
+            WHERE (seller_inn = '{inn}' OR buyer_inn = '{inn}') AND {year_filter}
+            GROUP BY seller_broker_code, seller_broker_name
+            ORDER BY turnover_uzs DESC
+            LIMIT 5
+            """
+            return {"sql": sql, "intent": "company_brokers", "metadata": {"company": company, "year": year}}
+
+        # -------------------------------------------------------------
+        # DIMENSION 0.2: COMMODITY-SPECIFIC INTELLIGENCE (When commodity is active)
+        # -------------------------------------------------------------
+        if commodity:
+            # 1. Product Sellers (who sold this commodity)
+            if (
+                any(w in q_lower for w in ["sotgan", "sotuvchi", "sotuvchilari", "kim sotgan", "продав", "поставщик", "кто продал"])
+                or (any(w in q_lower for w in ["kompaniya", "kompaniyalar", "компани", "eng katta", "самый крупный"]) 
+                    and not any(w in q_lower for w in ["xaridor", "olgan", "покупа", "купил", "broker", "брокер"]))
+            ):
+                sql = f"""
+                SELECT 
+                    seller_inn AS inn,
+                    seller_name AS name,
+                    seller_region AS region,
+                    COUNT(*) AS deals_count,
+                    SUM(contracted_volume_units) AS volume_sold,
+                    unit,
+                    SUM(executed_amount_uzs) AS total_sales_uzs
+                FROM v_deals_enriched
+                WHERE is_executed = TRUE 
+                  AND LOWER(product_raw_name) LIKE '%{commodity}%' 
+                  AND {year_filter}
+                GROUP BY seller_inn, seller_name, seller_region, unit
+                ORDER BY total_sales_uzs DESC
+                LIMIT 10
+                """
+                return {"sql": sql, "intent": "product_sellers", "metadata": {"commodity": commodity, "year": year}}
+
+            # 2. Product Buyers (who bought this commodity)
+            if any(w in q_lower for w in ["xaridor", "olgan", "sotib olgan", "xarid", "покупател", "покупа", "купил", "закуп", "кто купил"]):
+                sql = f"""
+                SELECT 
+                    buyer_inn AS inn,
+                    buyer_name AS name,
+                    buyer_region AS region,
+                    COUNT(*) AS deals_count,
+                    SUM(contracted_volume_units) AS volume_bought,
+                    unit,
+                    SUM(executed_amount_uzs) AS total_purchases_uzs
+                FROM v_deals_enriched
+                WHERE is_executed = TRUE 
+                  AND LOWER(product_raw_name) LIKE '%{commodity}%' 
+                  AND {year_filter}
+                GROUP BY buyer_inn, buyer_name, buyer_region, unit
+                ORDER BY total_purchases_uzs DESC
+                LIMIT 10
+                """
+                return {"sql": sql, "intent": "product_buyers", "metadata": {"commodity": commodity, "year": year}}
+
+            # 3. Product Brokers (who intermediated this commodity)
+            if any(w in q_lower for w in ["broker", "брокер"]):
+                sql = f"""
+                SELECT 
+                    seller_broker_code AS broker_code,
+                    seller_broker_name AS broker_name,
+                    COUNT(*) AS deals_count,
+                    SUM(executed_amount_uzs) AS turnover_uzs
+                FROM v_deals_enriched
+                WHERE is_executed = TRUE 
+                  AND LOWER(product_raw_name) LIKE '%{commodity}%' 
+                  AND {year_filter}
+                GROUP BY seller_broker_code, seller_broker_name
+                ORDER BY turnover_uzs DESC
+                LIMIT 10
+                """
+                return {"sql": sql, "intent": "product_brokers", "metadata": {"commodity": commodity, "year": year}}
+
+            # 4. Product Regional Breakdown
+            if any(w in q_lower for w in ["hudud", "viloyat", "регион", "област"]):
+                sql = f"""
+                SELECT 
+                    seller_region AS region,
+                    COUNT(*) AS deals_count,
+                    SUM(contracted_volume_units) AS volume_sold,
+                    unit,
+                    SUM(executed_amount_uzs) AS total_sales_uzs
+                FROM v_deals_enriched
+                WHERE is_executed = TRUE 
+                  AND LOWER(product_raw_name) LIKE '%{commodity}%' 
+                  AND {year_filter}
+                GROUP BY seller_region, unit
+                ORDER BY total_sales_uzs DESC
+                LIMIT 10
+                """
+                return {"sql": sql, "intent": "product_regions", "metadata": {"commodity": commodity, "year": year}}
+
+            # 5. Product Price Range / Quotations
+            if any(w in q_lower for w in ["narx", "narxi", "qimmat", "arzon", "цена", "цены", "средняя", "мин", "макс", "стоимость"]):
+                sql = f"""
+                SELECT 
+                    product_name,
+                    unit,
+                    currency,
+                    MIN(unit_price_contract_currency) AS min_price,
+                    MAX(unit_price_contract_currency) AS max_price,
+                    AVG(unit_price_contract_currency) AS avg_price,
+                    COUNT(*) AS deals_count,
+                    SUM(executed_amount_uzs) AS turnover_uzs
+                FROM v_deals_enriched
+                WHERE LOWER(product_raw_name) LIKE '%{commodity}%' 
+                  AND {year_filter}
+                GROUP BY product_name, unit, currency
+                ORDER BY deals_count DESC
+                LIMIT 5
+                """
+                return {"sql": sql, "intent": "product_price_range", "metadata": {"commodity": commodity, "year": year}}
+
+            # 6. Product Multi-Year Dynamics
+            if is_trend:
+                sql = f"""
+                SELECT 
+                    EXTRACT(YEAR FROM deal_date) AS deal_year,
+                    COUNT(*) AS deals_count,
+                    SUM(contracted_volume_units) AS contracted_volume,
+                    SUM(executed_volume_units) AS delivered_volume,
+                    unit,
+                    SUM(amount_uzs) AS turnover_uzs,
+                    AVG(unit_price_contract_currency) AS avg_unit_price
+                FROM v_deals_enriched
+                WHERE LOWER(product_raw_name) LIKE '%{commodity}%'
+                GROUP BY EXTRACT(YEAR FROM deal_date), unit
+                ORDER BY deal_year ASC
+                """
+                return {"sql": sql, "intent": "commodity_trend", "metadata": {"commodity": commodity}}
+
+            # 7. Commodity Stats (Volume, Amount, Price)
+            sql = f"""
+            SELECT 
+                product_category,
+                unit,
+                COUNT(*) AS deals_count,
+                SUM(contracted_volume_units) AS total_contracted_units,
+                SUM(executed_volume_units) AS total_delivered_units,
+                SUM(amount_uzs) AS total_amount_uzs,
+                AVG(unit_price_contract_currency) AS avg_price_per_unit
+            FROM v_deals_enriched
+            WHERE LOWER(product_raw_name) LIKE '%{commodity}%'
+              AND {year_filter}
+              AND {region_filter}
+            GROUP BY product_category, unit
+            ORDER BY total_amount_uzs DESC
+            LIMIT 5
+            """
+            return {"sql": sql, "intent": "commodity_stats", "metadata": {"commodity": commodity, "year": year}}
+
+        # -------------------------------------------------------------
+        # DIMENSION 0.3: TOP PRODUCTS (When no specific commodity)
+        # -------------------------------------------------------------
+        is_top_product_q = (
+            (any(w in q_lower for w in ["top tovar", "топ товар", "топ самых"])
+             or (any(w in q_lower for w in ["eng ko'p", "eng yirik", "eng katta", "топ", "лидер", "популярн", "продаваем"]) 
+                 and any(w in q_lower for w in ["tovar", "mahsulot", "товар", "продукци"])))
+            and not any(w in q_lower for w in ["kompaniya", "kompaniyani", "sotuvchi", "xaridor", "kim", "кто", "компания", "компании", "поставщик", "xarid"])
+        )
+        if is_top_product_q:
+            order_by = "total_turnover_uzs DESC"
+            if any(w in q_lower for w in ["hajm", "hajmi", "tonna", "объем"]):
+                order_by = "total_volume DESC"
+            elif any(w in q_lower for w in ["bitim", "bitimlar", "soni", "сделок", "сделка"]):
+                order_by = "deals_count DESC"
+
+            sql = f"""
+            SELECT 
+                product_name,
+                unit,
+                COUNT(*) AS deals_count,
+                SUM(contracted_volume_units) AS total_volume,
+                SUM(executed_amount_uzs) AS total_turnover_uzs
+            FROM v_deals_enriched
+            WHERE is_executed = TRUE AND {year_filter}
+            GROUP BY product_name, unit
+            ORDER BY {order_by}
+            LIMIT 10
+            """
+            return {"sql": sql, "intent": "top_products", "metadata": {"year": year}}
 
         # -------------------------------------------------------------
         # DIMENSION 1: PARTICIPANTS (Sellers / Buyers / Top Companies)
@@ -212,8 +431,11 @@ class UniversalSQLGenerator:
                 """
                 return {"sql": sql, "intent": "buyer_top", "metadata": {"year": year, "region": region}}
 
-        # Single Company General
-        if company:
+        # Single Company Card Lookup
+        if company and (
+            any(w in q_lower for w in ["haqida", "ma'lumot", "kartochka", "inn", "stir", "rekvizit", "о компании", "карточка", "профиль", "profil", "kim bu", "кто это", "faoliyat"])
+            or plan.target_entity in ["company_card", "participant_card"]
+        ):
             inn, name = company
             sql = f"""
             SELECT 
@@ -291,47 +513,8 @@ class UniversalSQLGenerator:
             return {"sql": sql, "intent": "export_deals", "metadata": {"year": year}}
 
         # -------------------------------------------------------------
-        # DIMENSION 4: COMMODITY / PRODUCT DYNAMICS
+        # DIMENSION 4: PRODUCT CATEGORIES
         # -------------------------------------------------------------
-        if commodity:
-            if is_trend:
-                # Multi-year trend
-                sql = f"""
-                SELECT 
-                    EXTRACT(YEAR FROM deal_date) AS deal_year,
-                    COUNT(*) AS deals_count,
-                    SUM(contracted_volume_units) AS contracted_volume,
-                    SUM(executed_volume_units) AS delivered_volume,
-                    unit,
-                    SUM(amount_uzs) AS turnover_uzs,
-                    AVG(unit_price_contract_currency) AS avg_unit_price
-                FROM v_deals_enriched
-                WHERE LOWER(product_raw_name) LIKE '%{commodity}%'
-                GROUP BY EXTRACT(YEAR FROM deal_date), unit
-                ORDER BY deal_year ASC
-                """
-                return {"sql": sql, "intent": "commodity_trend", "metadata": {"commodity": commodity}}
-            else:
-                sql = f"""
-                SELECT 
-                    product_category,
-                    unit,
-                    COUNT(*) AS deals_count,
-                    SUM(contracted_volume_units) AS total_contracted_units,
-                    SUM(executed_volume_units) AS total_delivered_units,
-                    SUM(amount_uzs) AS total_amount_uzs,
-                    AVG(unit_price_contract_currency) AS avg_price_per_unit
-                FROM v_deals_enriched
-                WHERE LOWER(product_raw_name) LIKE '%{commodity}%'
-                  AND {year_filter}
-                  AND {region_filter}
-                GROUP BY product_category, unit
-                ORDER BY total_amount_uzs DESC
-                LIMIT 5
-                """
-                return {"sql": sql, "intent": "commodity_stats", "metadata": {"commodity": commodity, "year": year}}
-
-        # Product Categories
         if category:
             sql = f"""
             SELECT 
@@ -345,23 +528,6 @@ class UniversalSQLGenerator:
             LIMIT 10
             """
             return {"sql": sql, "intent": "category_breakdown", "metadata": {"category": category, "year": year}}
-
-        # Top Products
-        if any(w in q_lower for w in ["eng ko'p", "top tovar", "reyting", "ommapop", "лидер", "популярн", "продаваем", "топ товар", "топ самых"]):
-            sql = f"""
-            SELECT 
-                product_name,
-                COUNT(*) AS deals_count,
-                SUM(contracted_volume_units) AS total_volume,
-                unit,
-                SUM(amount_uzs) AS total_turnover_uzs
-            FROM v_deals_enriched
-            WHERE is_executed = TRUE AND {year_filter}
-            GROUP BY product_name, unit
-            ORDER BY total_turnover_uzs DESC
-            LIMIT 10
-            """
-            return {"sql": sql, "intent": "top_products", "metadata": {"year": year}}
 
         # -------------------------------------------------------------
         # DIMENSION 5: STATUSES & CANCELLED TRANSACTIONS

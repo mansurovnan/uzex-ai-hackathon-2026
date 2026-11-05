@@ -21,19 +21,20 @@ from .sql_generator import UniversalSQLGenerator
 from .sql_guard import validate_and_guard_sql
 from .verifier import ResultVerifier
 from .synthesizer import ResponseSynthesizer
+from .conversational import ConversationalAgent
 
 def detect_language(text: str) -> str:
     uz_markers = [
         "qancha", "nechta", "qaysi", "haqida", "tuzilgan", "sotilgan", "jami", 
         "bitim", "yil", "yili", "eng", "narxi", "qaysilar", "summasi", "kim",
         "uning", "ularning", "solishtir", "taqqosla", "bo'yicha", "bo'lgan", "xarid",
-        "top", "ko'rsat"
+        "top", "ko'rsat", "mahsulot", "tovar", "sotuvchi"
     ]
     ru_markers = [
-        "сколько", "какой", "какова", "каков", "сделок", "сделка", "продано", 
-        "всего", "год", "году", "самый", "цена", "сумма", "рейтинг", "отчет",
-        "кто", "его", "их", "сравни", "динамика", "участники", "купил", "продал",
-        "найди", "покажи"
+        "сколько", "какой", "какова", "каков", "какие", "какая", "сделок", "сделка", "продано", 
+        "всего", "год", "году", "самый", "цена", "цены", "сумма", "рейтинг", "отчет",
+        "кто", "его", "их", "сравни", "динамика", "участники", "купил", "продал", "покупал",
+        "найди", "покажи", "товары", "товар", "бирже", "торгуются", "данные", "откуда"
     ]
     t = text.lower()
     uz_score = sum(1 for m in uz_markers if m in t)
@@ -41,8 +42,13 @@ def detect_language(text: str) -> str:
     
     if any(ch in t for ch in ["o'", "o‘", "g'", "g‘", "sh", "ch"]):
         uz_score += 2
+
+    # Russian-specific Cyrillic letters
+    if any(ch in t for ch in ["ы", "щ", "э", "ъ", "ь"]):
+        ru_score += 3
         
-    return "uz" if uz_score >= ru_score else "ru"
+    import re
+    return "uz" if uz_score > ru_score else ("ru" if ru_score > uz_score else ("ru" if re.search(r'[а-яА-ЯёЁ]', text) else "uz"))
 
 class ExchangeQueryEngine:
     def __init__(self):
@@ -56,6 +62,20 @@ class ExchangeQueryEngine:
     def process_question(self, question: str, session_id: str = "default") -> Dict[str, Any]:
         lang = detect_language(question)
         q_raw = question.strip()
+
+        # 0. Fast-path: Check Pure Conversational Small-talk (Greetings, Thanks, Identity, Farewells)
+        is_conv, conv_category, conv_lang = ConversationalAgent.is_conversational_only(q_raw)
+        if is_conv:
+            ans = ConversationalAgent.generate_response(conv_category, conv_lang or lang)
+            return {
+                "answer": ans,
+                "sql": None,
+                "data": [],
+                "language": conv_lang or lang,
+                "verified": True,
+                "row_count": 0,
+                "sub_questions_count": 0
+            }
 
         # 1. Parse into Analytical Sub-Questions
         plans: List[SubQuestionPlan] = self.planner.parse_message(q_raw)
@@ -125,6 +145,27 @@ class ExchangeQueryEngine:
                 "data": [],
                 "verified": True,
                 "is_unanswerable": True,
+                "row_count": 0
+            }
+
+        # Check for synthetic data disclaimer
+        if sql_plan.get("intent") == "synthetic_disclaimer":
+            answer = self.synthesizer.synthesize_single(
+                intent="synthetic_disclaimer",
+                cols=[],
+                rows=[],
+                lang=lang,
+                question=plan.raw_question,
+                metadata={},
+                is_unanswerable=False
+            )
+            return {
+                "question": plan.raw_question,
+                "answer": answer,
+                "sql": None,
+                "data": [],
+                "verified": True,
+                "is_unanswerable": False,
                 "row_count": 0
             }
 
@@ -222,11 +263,41 @@ class ExchangeQueryEngine:
         )
 
         # F. Update Conversational Memory Context
+        top_company = metadata.get("company")
+        top_broker = metadata.get("broker")
+        top_commodity = metadata.get("commodity")
+        top_product_name = metadata.get("product_name")
+
+        if rows and cols:
+            first_row_dict = dict(zip(cols, rows[0]))
+            if not top_company:
+                if "inn" in first_row_dict and "name" in first_row_dict:
+                    top_company = (str(first_row_dict["inn"]), str(first_row_dict["name"]))
+                elif "seller_inn" in first_row_dict and "seller_name" in first_row_dict:
+                    top_company = (str(first_row_dict["seller_inn"]), str(first_row_dict["seller_name"]))
+            
+            if not top_broker:
+                if "broker_code" in first_row_dict and "broker_name" in first_row_dict:
+                    top_broker = (str(first_row_dict["broker_code"]), str(first_row_dict["broker_name"]))
+
+            if not top_commodity:
+                if "product_name" in first_row_dict:
+                    p_name_val = str(first_row_dict["product_name"])
+                    top_product_name = p_name_val
+                    comm_list = ["sement", "bug'doy", "bugdoy", "paxta", "shakar", "yog'", "yog", "mis", "katod", "benzin", "ko'mir", "цемент", "пшеница", "хлопок", "сахар", "масло", "медь", "катод", "уголь"]
+                    for c_kw in comm_list:
+                        if c_kw in p_name_val.lower():
+                            top_commodity = c_kw
+                            break
+                    if not top_commodity:
+                        top_commodity = p_name_val.split()[0].lower()
+
         self.context.update_context(
             session_id=session_id,
-            broker=metadata.get("broker"),
-            company=metadata.get("company"),
-            commodity=metadata.get("commodity"),
+            broker=top_broker,
+            company=top_company,
+            commodity=top_commodity,
+            product_name=top_product_name,
             year=metadata.get("year"),
             region=metadata.get("region"),
             intent=intent,
